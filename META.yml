@@ -1,0 +1,41 @@
+---
+abstract: 'Adapter for CGI::header()'
+author:
+  - 'Ryo Anazawa (anazawa@cpan.org)'
+build_requires:
+  CGI: 3.49
+  CGI::Cookie: 0
+  ExtUtils::MakeMaker: 6.59
+  Test::Base: 0.60
+  Test::Exception: 0.31
+  Test::MockTime: 0
+  Test::More: 0.98
+  Test::Pod: 1.45
+  Test::Warn: 0.24
+configure_requires:
+  ExtUtils::MakeMaker: 6.59
+distribution_type: module
+dynamic_config: 1
+generated_by: 'Module::Install version 1.06'
+license: perl
+meta-spec:
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4
+module_name: CGI::Header
+name: CGI-Header
+no_index:
+  directory:
+    - inc
+    - t
+    - xt
+requires:
+  CGI::Util: 1.5
+  Carp: 1.10
+  List::Util: 1.19
+  Scalar::Util: 1.19
+  overload: 1.06
+  perl: 5.8.9
+resources:
+  license: http://dev.perl.org/licenses/
+  repository: https://github.com/anazawa/p5-CGI-Header
+version: 0.01
