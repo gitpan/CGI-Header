@@ -1,11 +1,12 @@
 ---
-abstract: 'Adapter for CGI::header()'
+abstract: 'Adapter for CGI::header() function'
 author:
   - 'Ryo Anazawa (anazawa@cpan.org)'
 build_requires:
-  CGI: 3.49
+  CGI: 3.60
   CGI::Cookie: 0
   ExtUtils::MakeMaker: 6.59
+  HTTP::Date: 0
   Test::Base: 0.60
   Test::Exception: 0.31
   Test::MockTime: 0
@@ -38,4 +39,4 @@ requires:
 resources:
   license: http://dev.perl.org/licenses/
   repository: https://github.com/anazawa/p5-CGI-Header
-version: 0.01
+version: 0.02
