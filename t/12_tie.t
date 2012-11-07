@@ -3,57 +3,54 @@ use warnings;
 use CGI::Header;
 use Test::More tests => 19;
 
-my $class = 'CGI::Header';
-
 my %alias = (
-    TIEHASH => 'new',
-    FETCH   => 'get',
-    STORE   => 'set',
-    DELETE  => 'delete',
-    EXISTS  => 'exists',
-    CLEAR   => 'clear',
+    'TIEHASH' => 'new',
+    'FETCH'   => 'get',
+    'STORE'   => 'set',
+    'DELETE'  => 'delete',
+    'EXISTS'  => 'exists',
+    'CLEAR'   => 'clear',
 );
 
-can_ok $class, ( keys %alias, 'SCALAR' );
+can_ok 'CGI::Header', ( keys %alias, 'SCALAR' );
 
+my $class = 'CGI::Header';
 while ( my ($got, $expected) = each %alias ) {
     is $class->can($got), $class->can($expected);
 }
 
-my %adaptee;
-tie my %adapter, $class, \%adaptee;
+my $header = tie my %header, 'CGI::Header';
 
-isa_ok tied %adapter, $class;
+isa_ok tied %header, 'CGI::Header';
 
 # SCALAR
-%adaptee = ();
-ok %adapter;
-%adaptee = ( -type => q{} );
-ok !%adapter;
+%{ $header->header } = ();
+ok %header;
+%{ $header->header } = ( -type => q{} );
+ok !%header;
 
 # CLEAR
-%adaptee = ();
-%adapter = ();
-is_deeply \%adaptee, { -type => q{} };
+%{ $header->header } = ();
+%header = ();
+is_deeply $header->header, { -type => q{} };
 
 # EXISTS
-%adaptee = ( -foo => 'bar', -bar => q{} );
-ok exists $adapter{Foo};
-ok exists $adapter{Bar};
-ok !exists $adapter{Baz};
+%{ $header->header } = ( -foo => 'bar', -bar => q{} );
+ok exists $header{Foo};
+ok exists $header{Bar};
+ok !exists $header{Baz};
 
 # DELETE
-%adaptee = ( -foo => 'bar', -bar => 'baz' );
-is delete $adapter{Foo}, 'bar';
-is_deeply \%adaptee, { -bar => 'baz' };
+%{ $header->header } = ( -foo => 'bar', -bar => 'baz' );
+is delete $header{Foo}, 'bar';
+is_deeply $header->header, { -bar => 'baz' };
 
 # FETCH
-%adaptee = ( -foo => 'bar' );
-is $adapter{Foo}, 'bar';
-is $adapter{Bar}, undef;
+%{ $header->header } = ( -foo => 'bar' );
+is $header{Foo}, 'bar';
+is $header{Bar}, undef;
 
 # STORE
-%adaptee = ();
-$adapter{Foo} = 'bar';
-is_deeply \%adaptee, { -foo => 'bar' };
-
+%{ $header->header } = ();
+$header{Foo} = 'bar';
+is_deeply $header->header, { -foo => 'bar' };
