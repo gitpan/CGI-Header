@@ -7,7 +7,7 @@ use Carp qw/carp croak/;
 use Scalar::Util qw/refaddr/;
 use List::Util qw/first/;
 
-our $VERSION = '0.07';
+our $VERSION = '0.08';
 
 my %header;
 
@@ -30,14 +30,12 @@ sub rehash {
     my $self   = shift;
     my $header = $header{ refaddr $self };
 
-    my @headers;
-    while ( my ($norm, $value) = CORE::each %{$header} ) {
-        $norm = "-$norm" unless $norm =~ /^-/;
+    for my $key ( keys %{$header} ) {
+        my $norm = $key =~ /^-/ ? $key : "-$key";
         substr( $norm, 1 ) =~ tr/A-Z-/a-z_/;
-        push @headers, $alias_of{ $norm } || $norm, $value;
+        $norm = $alias_of{ $norm } if exists $alias_of{ $norm };
+        $header->{ $norm } = delete $header->{ $key };
     }
-
-    %{ $header } = @headers;
 
     return;
 }
@@ -126,7 +124,7 @@ sub set {
     my $self = shift;
     my $norm = _normalize( shift );
     my $header = $header{ refaddr $self };
-    ( $set{$norm} || $set )->( $header, $norm, shift ) if $norm && @_;
+    ( $set{$norm} || $set )->( $header, $norm, @_ ) if $norm && @_;
     return;
 }
 
@@ -196,7 +194,7 @@ sub _normalize {
     $is_excluded{ $norm } ? undef : "-$norm";
 }
 
-sub is_empty { !shift->SCALAR }
+sub is_empty { !$_[0]->SCALAR }
 
 sub clear {
     my $self = shift;
@@ -441,20 +439,29 @@ This module isn't the replacement of the function.
 Although this class implements C<as_string()> method,
 the function should stringify the reference in most cases.
 
-The following use case is expected:
+This module can be used in the following situation:
 
 =over 4
 
 =item 1. $header is a hash reference which represents CGI response headers
 
+For exmaple, L<CGI::Application> implements C<header_add()> method
+which can be used to add CGI.pm-compatible HTTP header properties.
+Instances of CGI applications often hold those properties.
+
   my $header = { -type => 'text/plain' };
 
 =item 2. Manipulates $header using CGI::Header
 
+Since property names are case-insensitive,
+application developers have to normalize them manually
+when they specify header properties.
+CGI::Header normalizes them automatically.
+
   use CGI::Header;
 
   my $h = CGI::Header->new( $header );
-  $h->set( 'Content-Length' => 3002 );
+  $h->set( 'Content-Length' => 3002 ); # add Content-Length header
 
   $header;
   # => {
@@ -464,10 +471,14 @@ The following use case is expected:
 
 =item 3. Passes $header to CGI::header() to stringify the variable
 
+C<header()> function just stringifies given header properties.
+This module can be used to generate L<PSGI>-compatible header
+array references. See also flatten().
+
   use CGI;
 
   print CGI::header( $header );
-  # Content-Length: 3002
+  # Content-length: 3002
   # Content-Type: text/plain; charset=ISO-8859-1
   #
 
@@ -509,31 +520,67 @@ A shortcut for:
 
 =over 4
 
+=item $header->header
+
+Returns the header hash reference associated with this CGI::Header object.
+
 =item $header->rehash
 
 Rebuilds the header hash to normalize parameter names
-without changing the reference:
+without changing the reference.
+If parameter names aren't normalized, the methods listed below won't work
+as you expect.
 
   my $h1 = $header->header;
   # => {
-  #     '-content_type' => 'text/plain',
-  #     'Set-Cookie'    => 'ID=123456; path=/',
-  #     'expires'       => '+3d',
-  #     '-target'       => 'ResultsWindow',
+  #     '-content_type'   => 'text/plain',
+  #     'Set-Cookie'      => 'ID=123456; path=/',
+  #     'expires'         => '+3d',
+  #     '-target'         => 'ResultsWindow',
+  #     '-content-length' => '3002',
   # }
 
   $header->rehash;
 
   my $h2 = $header->header; # same reference as $h1
   # => {
-  #     '-type'    => 'text/plain',
-  #     '-cookie'  => 'ID=123456; path=/',
-  #     '-expires' => '+3d',
-  #     '-target'  => 'ResultsWindow',
+  #     '-type'           => 'text/plain',
+  #     '-cookie'         => 'ID=123456; path=/',
+  #     '-expires'        => '+3d',
+  #     '-target'         => 'ResultsWindow',
+  #     '-content_length' => '3002',
   # }
 
-If parameter names aren't normalized, the methods listed below won't work
-as you expect.
+Normalized parameter names are:
+
+=over 4
+
+=item lowercased
+
+  'Content-Length' -> 'content-length'
+
+=item start with a dash
+
+  'content-length' -> '-content-length'
+
+=item use underscores instead of dashes except for the first character
+
+  '-content-length' -> '-content_length'
+
+=back
+
+C<CGI::header()> also accepsts aliases of parameter names.
+This module converts them as follows:
+
+ '-content_type'  -> '-type'
+ '-set_cookie'    -> '-cookie'
+ '-cookies'       -> '-cookie'
+ '-window_target' -> '-target'
+
+NOTE: C<new()> doesn't check whether parameter names are normalized
+or not at all,
+and so you have to C<rehash()> the header hash explicitly
+when you aren't sure that they are normalized.
 
 =item $value = $header->get( $field )
 
@@ -568,64 +615,6 @@ Returns the value of the deleted field.
 
   my $value = $header->delete( 'Content-Disposition' ); # => 'inline'
 
-=item @fields = $header->field_names
-
-Returns the list of distinct field names present in the header.
-The field names have case as returned by C<CGI::header()>.
-
-  my @fields = $header->field_names;
-  # => ( 'Set-Cookie', 'Content-length', 'Content-Type' )
-
-=item $header->each( \&callback )
-
-Apply a subroutine to each header field in turn.
-The callback routine is called with two parameters;
-the name of the field and a value.
-If the Set-Cookie header is multi-valued, then the routine is called
-once for each value.
-Any return values of the callback routine are ignored.
-
-  my @lines;
-
-  $header->each(sub {
-      my ( $field, $value ) = @_;
-      push @lines, "$field: $value";
-  });
-
-  print join @lines, "\n";
-  # Content-length: 3002
-  # Content-Type: text/plain
-
-=item @headers = $header->flatten
-
-Returns pairs of fields and values. 
-
-  @headers = $header->flatten;
-  # => ( 'Content-length', '3002', 'Content-Type', 'text/plain' )
-
-It's identical to:
-
-  my @headers;
-  $self->each(sub {
-      my ( $field, $value ) = @_;
-      push @headers, $field, "$value"; # force stringification
-  });
-
-This method can be used to generate L<PSGI>-compatible header array references:
-
-  my $status_code = $header->delete( 'Status' ) || '200 OK';
-  $status_code =~ s/\D*$//;
-
-  $header->nph( 0 ); # removes the Server header
-
-  my @headers = $header->flatten;
-
-See also L<CGI::Emulate::PSGI>, L<CGI::PSGI>.
-
-=item $header->clear
-
-This will remove all header fields.
-
 =item $bool = $header->is_empty
 
 Returns true if the header contains no key-value pairs.
@@ -636,6 +625,10 @@ Returns true if the header contains no key-value pairs.
       ...
   }
 
+=item $header->clear
+
+This will remove all header fields.
+
 =item $clone = $header->clone
 
 Returns a copy of this CGI::Header object.
@@ -643,31 +636,6 @@ It's identical to:
 
   my %copy = %{ $header->header };
   my $clone = CGI::Header->new( \%copy );
-
-=item $header->as_string
-
-=item $header->as_string( $eol )
-
-Returns the header fields as a formatted MIME header.
-The optional C<$eol> parameter specifies the line ending sequence to use.
-The default is C<\015\012>.
-
-The following:
-
-  use CGI;
-  print CGI::header( $header->header );
-
-is identical to:
-
-  my $CRLF = $CGI::CRLF;
-  print $header->as_string( $CRLF ), $CRLF;
-
-When valid multi-line headers are included, this method will always output
-them back as a single line, according to the folding rules of RFC 2616:
-the newlines will be removed, while the white space remains.
-
-Unlike CGI.pm, when invalid newlines are included,
-this module removes them instead of throwing exceptions.
 
 =item $filename = $header->attachment
 
@@ -690,6 +658,8 @@ Represents P3P tags. The parameter can be an array or a space-delimited
 string. Returns a list of P3P tags.
 
   $header->p3p_tags(qw/CAO DSP LAW CURa/);
+  # or
+  $header->p3p_tags( 'CAO DSP LAW CURa' );
 
 In this case, the outgoing header will be formatted as:
 
@@ -720,9 +690,87 @@ with a NPH (no-parse-header) script.
 
   $header->nph( 1 );
 
+=item @fields = $header->field_names
+
+Returns the list of distinct field names present in the header.
+The field names have case as returned by C<CGI::header()>.
+
+  my @fields = $header->field_names;
+  # => ( 'Set-Cookie', 'Content-length', 'Content-Type' )
+
+=item $header->each( \&callback )
+
+Apply a subroutine to each header field in turn.
+The callback routine is called with two parameters;
+the name of the field and a value.
+If the Set-Cookie header is multi-valued, then the routine is called
+once for each value.
+Any return values of the callback routine are ignored.
+
+  my @lines;
+  $header->each(sub {
+      my ( $field, $value ) = @_;
+      push @lines, "$field: $value";
+  });
+
+  print join @lines, "\n";
+  # Content-length: 3002
+  # Content-Type: text/plain
+
+=item @headers = $header->flatten
+
+Returns pairs of fields and values. 
+
+  my @headers = $header->flatten;
+  # => ( 'Content-length', '3002', 'Content-Type', 'text/plain' )
+
+It's identical to:
+
+  my @headers;
+  $self->each(sub {
+      my ( $field, $value ) = @_;
+      push @headers, $field, "$value"; # force stringification
+  });
+
+This method can be used to generate L<PSGI>-compatible header array references:
+
+  my $status_code = $header->delete( 'Status' ) || '200 OK';
+  $status_code =~ s/\D*$//;
+
+  $header->nph( 0 ); # removes the Server header
+  my @headers = $header->flatten;
+
+See also L<CGI::Emulate::PSGI>, L<CGI::PSGI>.
+
+
+=item $header->as_string
+
+=item $header->as_string( $eol )
+
+Returns the header fields as a formatted MIME header.
+The optional C<$eol> parameter specifies the line ending sequence to use.
+The default is C<\015\012>.
+
+The following:
+
+  use CGI;
+  print CGI::header( $header->header );
+
+is identical to:
+
+  my $CRLF = $CGI::CRLF;
+  print $header->as_string( $CRLF ), $CRLF;
+
+When valid multi-line headers are included, this method will always output
+them back as a single line, according to the folding rules of RFC 2616:
+the newlines will be removed, while the white space remains.
+
+Unlike CGI.pm, when invalid newlines are included,
+this module removes them instead of throwing exceptions.
+
 =back
 
-=head2 C<tie()> INTERFACE
+=head2 tie() INTERFACE
 
   use CGI::Header;
 
@@ -744,7 +792,7 @@ Above methods are aliased as follows:
   EXISTS  -> exists
   SCALAR  -> !is_empty
 
-FIRSTKEY() and NEXTKEY() aren't implemented,
+NOTE: C<FIRSTKEY()> and C<NEXTKEY()> aren't implemented,
 and so you can't iterate through the tied hash.
 
   # doesn't work
@@ -786,7 +834,7 @@ because the following behavior will surprize us:
 
 =item Can't assign to '-p3p' directly, use p3p_tags() instead
 
-CGI::header() restricts where the policy-reference file is located,
+C<CGI::header()> restricts where the policy-reference file is located,
 and so you can't modify the location (C</w3c/p3p.xml>).
 The following code doesn't work as you expect:
 
