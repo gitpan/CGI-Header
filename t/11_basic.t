@@ -78,10 +78,11 @@ subtest 'rehash()' => sub {
     );
 
     my $expected = $header->header;
+
     is $header->rehash, $header, 'should return the current object itself';
     is $header->header, $expected, 'should return the same reference';
 
-    is_deeply $header->header, {
+    is_deeply $expected, {
         -type    => 'text/plain',
         -cookie  => 'ID=123456; path=/',
         -expires => '+3d',
@@ -151,7 +152,7 @@ subtest 'field_names()' => sub {
         Content-Type
     );
 
-    is_deeply \@got, \@expected;
+    is_deeply [ sort @got ], [ sort @expected ];
 };
 
 subtest 'flatten()' => sub {
@@ -172,7 +173,6 @@ subtest 'flatten()' => sub {
     );
 
     my @got = $header->flatten;
-
     my @expected = (
         'Status',         '304 Not Modified',
         'Set-Cookie',     "$cookie1",
@@ -181,8 +181,17 @@ subtest 'flatten()' => sub {
         'Content-length', '12345',
         'Content-Type',   'text/html',
     );
+    is_deeply \@got, \@expected, 'default';
 
-    is_deeply \@got, \@expected;
+    @got = $header->flatten(0);
+    @expected = (
+        'Status',         '304 Not Modified',
+        'Set-Cookie',     [ $cookie1, $cookie2 ],
+        'Date',           CGI::Util::expires(),
+        'Content-length', '12345',
+        'Content-Type',   'text/html',
+    );
+    is_deeply \@got, \@expected, 'not recursive';
 };
 
 subtest 'each()' => sub {

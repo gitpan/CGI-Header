@@ -7,9 +7,9 @@ use Carp qw/carp croak/;
 use Scalar::Util qw/refaddr/;
 use List::Util qw/first/;
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
-my %header;
+my ( %header, %iterator );
 
 sub new {
     my $class = shift;
@@ -22,8 +22,9 @@ sub new {
 sub header { $header{ refaddr $_[0] } }
 
 sub DESTROY {
-    my $self = shift;
-    delete $header{ refaddr $self };
+    my $this = refaddr shift;
+    delete $header{ $this };
+    delete $iterator{ $this };
     return;
 }
 
@@ -252,65 +253,57 @@ sub p3p_tags {
     return;
 }
 
-my %field_name_of = (
-    -content_disposition => 'Content-Disposition',
-    -content_type        => 'Content-Type',
-    -date                => 'Date',
-    -expires             => 'Expires',
-    -p3p                 => 'P3P',
-    -server              => 'Server',
-    -set_cookie          => 'Set-Cookie',
-    -status              => 'Status',
-    -window_target       => 'Window-Target',
-);
+sub flatten {
+    my $self         = shift;
+    my $is_recursive = defined $_[0] ? shift : 1;
+    my $header       = $header{ refaddr $self };
+    my %copy         = %{ $header };
 
-sub each {
-    my $self   = shift;
-    my $code   = shift;
-    my $header = $header{ refaddr $self };
-    my %copy   = %{ $header };
+    my @headers;
 
-    croak 'Must provide a code reference to each()' if ref $code ne 'CODE';
+    my ( $cookie, $expires, $nph, $status, $target )
+        = delete @copy{qw/-cookie -expires -nph -status -target/};
 
-    my $each = sub {
-        my $norm = shift;
-        $code->(
-            $field_name_of{ $norm },
-            ( $GET{$norm} || $GET )->( $header, $norm ),
-        );
-    };
+    push @headers, 'Server', $ENV{SERVER_SOFTWARE} || 'cmdline' if $nph;
+    push @headers, 'Status', $status if $status;
+    push @headers, 'Window-Target', $target if $target;
 
-    my ( $cookie, $expires, $nph )
-        = delete @copy{qw/-cookie -expires -nph/};
+    if ( my $tags = delete $copy{-p3p} ) {
+        $tags = join ' ', @{ $tags } if ref $tags eq 'ARRAY';
+        push @headers, 'P3P', qq{policyref="/w3c/p3p.xml", CP="$tags"};
+    }
 
-    $each->('-server')        if $nph;
-    $each->('-status')        if delete $copy{-status};
-    $each->('-window_target') if delete $copy{-target};
-    $each->('-p3p')           if delete $copy{-p3p};
-
-    if ( ref $cookie eq 'ARRAY' ) {
-        for my $c ( @{$cookie} ) {
-            $code->( 'Set-Cookie', $c );
-        }
+    if ( ref $cookie eq 'ARRAY' and $is_recursive ) {
+        push @headers, map { ('Set-Cookie', $_) } @{ $cookie };
     }
     elsif ( $cookie ) {
-        $code->( 'Set-Cookie', $cookie );
+        push @headers, 'Set-Cookie', $cookie;
     }
 
-    $each->('-expires')             if $expires;
-    $each->('-date')                if $expires or $cookie or $nph;
-    $each->('-content_disposition') if delete $copy{-attachment};
+    push @headers, 'Expires', CGI::Util::expires($expires) if $expires;
 
-    my $type = delete @copy{qw/-charset -type/};
+    if ( $expires or $cookie or $nph ) {
+        push @headers, 'Date', CGI::Util::expires();
+    }
+
+    if ( my $fn = delete $copy{-attachment} ) {
+        push @headers, 'Content-Disposition', qq{attachment; filename="$fn"};
+    }
+
+    my ( $type, $charset ) = delete @copy{qw/-type -charset/};
 
     # not ordered
     while ( my ($norm, $value) = each %copy ) {
-        $code->( _ucfirst($norm), $value );
+        push @headers, _ucfirst( $norm ), $value;
     }
 
-    $each->('-content_type') if !defined $type or $type ne q{};
+    if ( !defined $type or $type ne q{} ) {
+        my $ct = $type || 'text/html';
+        $ct .= "; charset=$charset" if $charset && $ct !~ /\bcharset\b/;
+        push @headers, 'Content-Type', $ct;
+    }
 
-    return;
+    @headers;
 }
 
 sub _ucfirst {
@@ -320,33 +313,23 @@ sub _ucfirst {
     $str;
 }
 
-sub field_names {
-    my $self = shift;
+sub each {
+    my ( $self, $callback ) = @_;
 
-    # FIXME:
-    # If the Set-Cookie header is multi-valued,
-    # @fields will contain duplicate values
-    
-    my @fields;
-    $self->each(sub {
-        push @fields, $_[0];
-    });
+    if ( ref $callback eq 'CODE' ) {
+        my @headers = $self->flatten;
+        while ( my ($field, $value) = splice @headers, 0, 2 ) {
+            $callback->( $field, $value );
+        }
+    }
+    else {
+        croak 'Must provide a code reference to each()';
+    }
 
-    @fields;
+    return;
 }
 
-sub flatten {
-    my $self = shift;
-
-    my @headers;
-    $self->each(sub {
-        my ( $field, $value ) = @_;
-        $value = $value->as_string if ref $value eq 'CGI::Cookie';
-        push @headers, $field, $value;
-    });
-
-    @headers;
-}
+sub field_names { keys %{{ $_[0]->flatten(0) }} }
 
 sub as_string {
     my $self   = shift;
@@ -401,6 +384,14 @@ sub SCALAR {
     my $header = $header{ refaddr $self };
     !defined $header->{-type} || first { $_ } values %{ $header };
 }
+
+sub FIRSTKEY {
+    my $self = shift;
+    my @fields = $self->field_names;
+    ( $iterator{ refaddr $self } = sub { shift @fields } )->();
+}
+
+sub NEXTKEY { $iterator{ refaddr $_[0] }->() }
 
 sub STORABLE_freeze {
     my ( $self, $cloning ) = @_;
@@ -722,7 +713,8 @@ with a NPH (no-parse-header) script.
 
 =item @fields = $header->field_names
 
-Returns the list of distinct field names present in the header.
+Returns the list of distinct field names present in the header
+in a random order.
 The field names have case as returned by C<CGI::header()>.
 
   my @fields = $header->field_names;
@@ -749,29 +741,44 @@ Any return values of the callback routine are ignored.
 
 =item @headers = $header->flatten
 
+=item @headers = $header->flatten( $is_recursive )
+
 Returns pairs of fields and values. 
+This method flattens the Set-Cookie headers recursively by default.
+The optional C<$is_recursive> argument determines
+whether to flatten them recursively.
 
-  my @headers = $header->flatten;
-  # => ( 'Content-length', '3002', 'Content-Type', 'text/plain' )
+  my $header = CGI::Header->new( -cookie => ['cookie1', 'cookie2'] );
 
-It's identical to:
+  $header->flatten;
+  # => ( 'Set-Cookie' => 'cookie1', 'Set-Cookie' => 'cookie2', ... )
 
-  my @headers;
-  $self->each(sub {
-      my ( $field, $value ) = @_;
-      push @headers, $field, "$value"; # force stringification
-  });
+  $header->flatten(0);
+  # => ( 'Set-Cookie' => ['cookie1', 'cookie2'], ... )
 
-This method can be used to generate L<PSGI>-compatible header array references:
+This method can be used to generate L<PSGI>-compatible header array
+references. For example,
 
-  my $status_code = $header->delete( 'Status' ) || '200 OK';
-  $status_code =~ s/\D*$//;
+  use parent 'CGI';
+  use CGI::Header;
 
-  $header->nph( 0 ); # removes the Server header
-  my @headers = $header->flatten;
+  sub psgi_header {
+      my $self   = shift;
+      my $header = CGI::Header->new(@_)->rehash;
+
+      my $status = $header->delete('Status') || '200 OK';
+      $status =~ s/\D*$//;
+
+      $status, [ $header->flatten ];
+  }
+
+Strictly speaking, you have to check C<charset()> attribute of CGI.pm.
+In addition, if C<< $header->nph >> is true,
+C<< $header->flatten >> will return the Server header
+which C<psgi_header()> shouldn't return.
+Those implementations are beyond the scope of this document ;)
 
 See also L<CGI::Emulate::PSGI>, L<CGI::PSGI>.
-
 
 =item $header->as_string
 
@@ -813,14 +820,6 @@ Above methods are aliased as follows:
   SCALAR  -> !is_empty
 
 See also L<perltie>.
-
-NOTE: C<FIRSTKEY()> and C<NEXTKEY()> aren't implemented,
-and so you can't iterate through the tied hash.
-
-  # doesn't work
-  keys %header;
-  values %header;
-  each %header;
 
 =head1 LIMITATIONS
 
