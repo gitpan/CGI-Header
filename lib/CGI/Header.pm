@@ -7,9 +7,14 @@ use Carp qw/carp croak/;
 use Scalar::Util qw/refaddr/;
 use List::Util qw/first/;
 
-our $VERSION = '0.11';
+our $VERSION = '0.12';
 
-my ( %header, %iterator );
+# Why Inside-out?
+# To avoid blessing a hash. This class behaves like a hash,
+# and so the hash dereference operator of the derived class
+# may be overloaded. Maybe not.
+
+my ( %header, %iterator ); # instance variables
 
 sub new {
     my $class = shift;
@@ -29,8 +34,8 @@ sub DESTROY {
 }
 
 my %alias_of = (
-    content_type => 'type',   window_target => 'target',
-    cookies      => 'cookie', set_cookie    => 'cookie',
+    -content_type => '-type',   -window_target => '-target',
+    -cookies      => '-cookie', -set_cookie    => '-cookie',
 );
 
 sub rehash {
@@ -38,10 +43,8 @@ sub rehash {
     my $header = $header{ refaddr $self };
 
     for my $key ( keys %{$header} ) {
-        my $norm = lc $key;
-           $norm =~ s/^-//;
-           $norm =~ tr/-/_/;
-           $norm = '-' . ( $alias_of{$norm} || $norm );
+        my $norm = _lc( $key );
+           $norm = $alias_of{ $norm } || $norm;
 
         next if $key eq $norm;
 
@@ -87,7 +90,7 @@ my %GET = (
 
 sub get {
     my $self = shift;
-    my $norm = _normalize( shift );
+    my $norm = _lc( shift );
     my $header = $header{ refaddr $self };
     $norm && ( $GET{$norm} || $GET )->( $header, $norm );
 }
@@ -125,7 +128,7 @@ my %set = (
 
 sub set {
     my $self = shift;
-    my $norm = _normalize( shift );
+    my $norm = _lc( shift );
     my $header = $header{ refaddr $self };
     ( $set{$norm} || $set )->( $header, $norm, @_ ) if $norm && @_;
     return;
@@ -146,7 +149,7 @@ my %exists = (
 
 sub exists {
     my $self = shift;
-    my $norm = _normalize( shift );
+    my $norm = _lc( shift );
     my $header = $header{ refaddr $self };
     $norm && ( $exists{$norm} || $exists )->( $header, $norm );
 }
@@ -177,7 +180,7 @@ my %delete = (
 sub delete {
     my $self   = shift;
     my $field  = shift;
-    my $norm   = _normalize( $field ) || return;
+    my $norm   = _lc( $field ) || return;
     my $header = $header{ refaddr $self };
 
     if ( my $delete = $delete{$norm} ) {
@@ -190,11 +193,12 @@ sub delete {
 }
 
 my %is_excluded = map { $_ => 1 }
-    qw( attachment charset cookie cookies nph target type );
+    qw( -attachment -charset -cookie -cookies -nph -target -type );
 
+# This funtion is obsolete and will be removed in 0.13
 sub _normalize {
     ( my $norm = lc shift ) =~ tr/-/_/;
-    $is_excluded{ $norm } ? undef : "-$norm";
+    $is_excluded{ $norm } ? undef : $norm;
 }
 
 sub is_empty { !$_[0]->SCALAR }
@@ -254,10 +258,10 @@ sub p3p_tags {
 }
 
 sub flatten {
-    my $self         = shift;
-    my $is_recursive = defined $_[0] ? shift : 1;
-    my $header       = $header{ refaddr $self };
-    my %copy         = %{ $header };
+    my $self   = shift;
+    my $level  = defined $_[0] ? int shift : 1;
+    my $header = $header{ refaddr $self };
+    my %copy   = %{ $header };
 
     my @headers;
 
@@ -265,7 +269,7 @@ sub flatten {
         = delete @copy{qw/-cookie -expires -nph -status -target/};
 
     push @headers, 'Server', $ENV{SERVER_SOFTWARE} || 'cmdline' if $nph;
-    push @headers, 'Status', $status if $status;
+    push @headers, 'Status',        $status if $status;
     push @headers, 'Window-Target', $target if $target;
 
     if ( my $tags = delete $copy{-p3p} ) {
@@ -273,7 +277,7 @@ sub flatten {
         push @headers, 'P3P', qq{policyref="/w3c/p3p.xml", CP="$tags"};
     }
 
-    if ( ref $cookie eq 'ARRAY' and $is_recursive ) {
+    if ( ref $cookie eq 'ARRAY' and $level ) {
         push @headers, map { ('Set-Cookie', $_) } @{ $cookie };
     }
     elsif ( $cookie ) {
@@ -306,13 +310,6 @@ sub flatten {
     @headers;
 }
 
-sub _ucfirst {
-    my $str = shift;
-    $str =~ s/^-(\w)/\u$1/;
-    $str =~ tr/_/-/;
-    $str;
-}
-
 sub each {
     my ( $self, $callback ) = @_;
 
@@ -332,16 +329,15 @@ sub each {
 sub field_names { keys %{{ $_[0]->flatten(0) }} }
 
 sub as_string {
-    my $self   = shift;
-    my $eol    = defined $_[0] ? shift : "\015\012";
-    my $header = $header{ refaddr $self };
+    my $self = shift;
+    my $eol  = defined $_[0] ? shift : "\015\012";
 
     my @lines;
 
     # add Status-Line
-    if ( $header->{-nph} ) {
+    if ( $self->nph ) {
         my $protocol = $ENV{SERVER_PROTOCOL} || 'HTTP/1.0';
-        my $status   = $header->{-status}    || '200 OK';
+        my $status   = $self->get('Status')  || '200 OK';
         push @lines, "$protocol $status";
     }
 
@@ -359,7 +355,6 @@ sub as_string {
 
 sub dump {
     my $self = shift;
-    my $this = refaddr $self;
 
     require Data::Dumper;
 
@@ -368,10 +363,24 @@ sub dump {
 
     Data::Dumper::Dumper({
         __PACKAGE__, {
-            header => $header{ $this },
+            header => $self->header,
         },
         @_,
     });
+}
+
+sub _lc {
+    my $str = lc shift;
+    $str = "-$str" if $str !~ /^-/;
+    substr( $str, 1 ) =~ tr/-/_/;
+    $str;
+}
+
+sub _ucfirst {
+    my $str = shift;
+    $str =~ s/^-(\w)/\u$1/;
+    $str =~ tr/_/-/;
+    $str;
 }
 
 BEGIN {
@@ -416,6 +425,7 @@ CGI::Header - Adapter for CGI::header() function
 
   use CGI::Header;
 
+  # CGI.pm-compatible HTTP header properties
   my $header = {
       -attachment => 'foo.gif',
       -charset    => 'utf-7',
@@ -424,22 +434,16 @@ CGI::Header - Adapter for CGI::header() function
       -nph        => 1,
       -p3p        => [qw/CAO DSP LAW CURa/],
       -target     => 'ResultsWindow',
-      -type       => 'image/gif',
+      -type       => 'image/gif'
   };
 
+  # create a CGI::Header object
   my $h = CGI::Header->new( $header );
 
   # update $header
   $h->set( 'Content-Length' => 3002 );
   $h->delete( 'Content-Disposition' );
   $h->clear;
-
-  my @headers = $h->flatten;
-  # => ( 'Content-length', '3002', 'Content-Type', 'text/plain' )
-
-  print $h->as_string;
-  # Content-length: 3002
-  # Content-Type: text/plain
 
   $h->header; # same reference as $header
 
@@ -511,6 +515,7 @@ which holds a reference to the original given argument:
 
   my $header = { -type => 'text/plain' };
   my $h = CGI::Header->new( $header );
+  $h->header; # same reference as $header
 
 The object updates the reference when called write methods like C<set()>,
 C<delete()> or C<clear()>:
@@ -519,10 +524,6 @@ C<delete()> or C<clear()>:
   $h->set( 'Content-Length' => 3002 );
   $h->delete( 'Content-Disposition' );
   $h->clear;
-
-It also has C<header()> method that would return the same reference:
-
-  $h->header; # same reference as $header
 
 =item $header = CGI::Header->new( -type => 'text/plain', ... )
 
@@ -553,7 +554,7 @@ as you expect.
   #     'Set-Cookie'      => 'ID=123456; path=/',
   #     'expires'         => '+3d',
   #     '-target'         => 'ResultsWindow',
-  #     '-content-length' => '3002',
+  #     '-content-length' => '3002'
   # }
 
   $header->rehash;
@@ -564,7 +565,7 @@ as you expect.
   #     '-cookie'         => 'ID=123456; path=/',
   #     '-expires'        => '+3d',
   #     '-target'         => 'ResultsWindow',
-  #     '-content_length' => '3002',
+  #     '-content_length' => '3002'
   # }
 
 Normalized parameter names are:
@@ -608,13 +609,17 @@ You can use underscores as a replacement for dashes in header names.
 
   # field names are case-insensitive
   $header->get( 'Content-Length' );
-  $header->get( 'content_length' );
+  $header->get( 'content-length' );
 
 The C<$value> argument may be a plain string or
 a reference to an array of L<CGI::Cookie> objects for the Set-Cookie header.
 
   $header->set( 'Content-Length' => 3002 );
+  my $content_length = $header->get( 'Content-Length' ); # => 3002
+
+  # $cookie1 and $cookie2 are CGI::Cookie objects
   $header->set( 'Set-Cookie' => [$cookie1, $cookie2] );
+  my $cookies = $header->get( 'Set-Cookie' ); # => [ $cookie1, $cookie2 ]
 
 =item $bool = $header->exists( $field )
 
@@ -631,6 +636,10 @@ Returns the value of the deleted field.
 
   my $value = $header->delete( 'Content-Disposition' ); # => 'inline'
 
+=item $header->clear
+
+This will remove all header fields.
+
 =item $bool = $header->is_empty
 
 Returns true if the header contains no key-value pairs.
@@ -641,16 +650,12 @@ Returns true if the header contains no key-value pairs.
       ...
   }
 
-=item $header->clear
-
-This will remove all header fields.
-
 =item $clone = $header->clone
 
 Returns a copy of this CGI::Header object.
 It's identical to:
 
-  my %copy = %{ $header->header };
+  my %copy = %{ $header->header }; # shallow copy
   my $clone = CGI::Header->new( \%copy );
 
 =item $filename = $header->attachment
@@ -680,6 +685,7 @@ returns the number of P3P tags.)
   $header->p3p_tags( 'CAO DSP LAW CURa' );
 
   my @tags = $header->p3p_tags; # => ("CAO", "DSP", "LAW", "CURa")
+  my $size = $header->p3p_tags; # => 4
 
 In this case, the outgoing header will be formatted as:
 
@@ -707,9 +713,24 @@ expiration interval. The following forms are all valid for this field:
 
 If set to a true value, will issue the correct headers to work
 with a NPH (no-parse-header) script.
+Specifically, the Date and Server headers will be added to response headers
+automatically.
 
   $header->nph( 1 );
   my $nph = $header->nph; # => 1
+
+  my $server = $header->get('Server'); # => $ENV{SERVER_SOFTWARE}
+  my $date   = $header->get('Date');   # => HTTP-Date
+
+NOTE: You can't modify those headers when C<< $header->nph >> is true:
+
+  $header->nph(1);
+
+  # wrong
+  $header->set( 'Server' => 'Apache/1.3.27 (Unix)' );
+  $header->set( 'Date' => 'Thu, 25 Apr 1999 00:40:33 GMT' );
+  $header->delete( 'Server' );
+  $header->delete( 'Date' );
 
 =item @fields = $header->field_names
 
@@ -751,10 +772,19 @@ whether to flatten them recursively.
   my $header = CGI::Header->new( -cookie => ['cookie1', 'cookie2'] );
 
   $header->flatten;
-  # => ( 'Set-Cookie' => 'cookie1', 'Set-Cookie' => 'cookie2', ... )
+  # => (
+  #     'Set-Cookie'   => 'cookie1',
+  #     'Set-Cookie'   => 'cookie2',
+  #     'Date'         => 'Thu, 25 Apr 1999 00:40:33 GMT',
+  #     'Content-Type' => 'text/html'
+  # )
 
   $header->flatten(0);
-  # => ( 'Set-Cookie' => ['cookie1', 'cookie2'], ... )
+  # => (
+  #     'Set-Cookie'   => ['cookie1', 'cookie2'],
+  #     'Date'         => 'Thu, 25 Apr 1999 00:40:33 GMT',
+  #     'Content-Type' => 'text/html'
+  # )
 
 This method can be used to generate L<PSGI>-compatible header array
 references. For example,
@@ -776,7 +806,7 @@ Strictly speaking, you have to check C<charset()> attribute of CGI.pm.
 In addition, if C<< $header->nph >> is true,
 C<< $header->flatten >> will return the Server header
 which C<psgi_header()> shouldn't return.
-Those implementations are beyond the scope of this document ;)
+Moreover, this method depends on a global variable C<%ENV>.
 
 See also L<CGI::Emulate::PSGI>, L<CGI::PSGI>.
 
@@ -795,6 +825,16 @@ the newlines will be removed, while the white space remains.
 Unlike CGI.pm, when invalid newlines are included,
 this module removes them instead of throwing exceptions.
 
+If C<< $header->nph >> is true, the Status-Line will be added to
+the beginning of response headers automatically.
+
+  $header->nph(1);
+
+  $header->as_string;
+  # HTTP/1.1 200 OK
+  # Server: Apache/1.3.27 (Unix)
+  # ...
+
 =back
 
 =head2 tie() INTERFACE
@@ -809,6 +849,8 @@ this module removes them instead of throwing exceptions.
   delete $header{'Content-Disposition'};
   %header = ();
 
+  tied( %header )->header; # same reference as $header
+
 Above methods are aliased as follows:
 
   TIEHASH -> new
@@ -818,6 +860,12 @@ Above methods are aliased as follows:
   CLEAR   -> clear
   EXISTS  -> exists
   SCALAR  -> !is_empty
+
+You can also iterate through the tied hash:
+
+  my @fields = keys %header;
+  my @values = values %header;
+  my ( $field, $value ) = each %header;
 
 See also L<perltie>.
 
@@ -866,7 +914,7 @@ You're allowed to set P3P tags using C<p3p_tags()>.
 
 =head1 SEE ALSO
 
-L<CGI>, L<Plack::Util>
+L<CGI>, L<Plack::Util>, L<HTTP::Headers>
 
 =head1 BUGS
 
