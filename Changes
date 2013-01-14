@@ -1,5 +1,50 @@
 Revision history for Perl extension CGI::Header.
 
+0.16  Jan 14th, 2013
+
+  [INCOMPATIBLE CHANGES]
+
+    - rehash() throws an exception when a property name is duplicated:
+
+        my $header = {
+            -Type        => 'text/plain',
+            Content_Type => 'text/html',
+        };
+
+        my $h = CGI::Header->new( $header );
+        $h->rehash; # die "Property '-type' already exists"
+
+      If it was allowed to overwrite existent properties,
+      it would be essentially impossible to predict 
+      the overwritten value of '-type' in the above example:
+
+        $h->header->{-type}; # => 'text/html' or 'text/plain' ?
+
+    - In addition to CGI.pm-compatible HTTP header properties,
+      new() accepts '-env' property which represents your current environment:
+
+        my $h = CGI::Header->new(
+            -type => 'text/plain',
+            -env  => \%ENV,
+        );
+
+        $h->header; # => { -type => 'text/plain' }
+        $h->env;    # => \%ENV
+
+      Unlike the above case, if a property name is duplicated,
+      that property will be overwritten silently:
+
+        my $h = CGI::Header->new(
+            -Type        => 'text/plain',
+            Content_Type => 'text/html',
+        );
+
+        $h->header->{-type}; # => "text/html"
+
+  [INTERNALS]
+
+    Add a subtest called 'as_string()' to t/10_basic.t
+
 0.15  Jan 11th, 2013
 
   Add env() which defaults to \%ENV. new() receives an additional

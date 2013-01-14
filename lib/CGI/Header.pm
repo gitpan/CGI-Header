@@ -6,15 +6,43 @@ use CGI::Util qw//;
 use Carp qw/carp croak/;
 use List::Util qw/first/;
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 # copied from Readonly.pm
 my $MODIFY = 'Modification of a read-only value attempted';
 
 sub new {
     my $self = bless {}, shift;
-    $self->{header} = ref $_[0] eq 'HASH' ? shift : { splice @_ };
-    $self->{env} = shift || \%ENV;
+    my @args = @_;
+
+    if ( ref $args[0] eq 'HASH' ) {
+        @{ $self }{qw/header env/} = splice @args, 0, 2;
+    }
+    else {
+        my %header;
+        while ( my ($key, $value) = splice @args, 0, 2 ) {
+            $header{ _normalize($key) } = $value; # force overwrite
+        }
+
+        @{ $self }{qw/env header/} = ( delete $header{-env}, \%header );
+    }
+
+    $self->{env} ||= \%ENV;
+
+    $self;
+}
+
+sub rehash {
+    my $self   = shift;
+    my $header = $self->{header};
+
+    for my $key ( keys %{$header} ) {
+        my $norm = _normalize( $key );
+        next if $key eq $norm; # $key is normalized
+        croak "Property '$norm' already exists" if exists $header->{ $norm };
+        $header->{ $norm } = delete $header->{ $key }; # rename $key to $norm
+    }
+
     $self;
 }
 
@@ -22,41 +50,12 @@ sub header { $_[0]->{header} }
 
 sub env { $_[0]->{env} }
 
-my %alias_of = (
-    -content_type => '-type',   -window_target => '-target',
-    -cookies      => '-cookie', -set_cookie    => '-cookie',
-);
-
-sub rehash {
-    my $self   = shift;
-    my $header = $self->{header};
-
-    for my $key ( keys %{$header} ) {
-        my $prop = _lc( $key );
-           $prop = $alias_of{ $prop } || $prop;
-
-        next if $key eq $prop;
-
-        # overwrites existent property
-        $header->{ $prop } = delete $header->{ $key };
-    }
-
-    $self;
-}
-
 my $get = sub { $_[0]->{$_[1]} };
 
 my %get = (
     -content_disposition => sub {
         my $filename = $_[0]->{-attachment};
         $filename ? qq{attachment; filename="$filename"} : $get->( @_ );
-    },
-    -content_type => sub {
-        my ( $type, $charset ) = @{ $_[0] }{qw/-type -charset/};
-        return if defined $type and $type eq q{};
-        $type ||= 'text/html';
-        $type .= "; charset=$charset" if $charset && $type !~ /\bcharset\b/;
-        $type;
     },
     -date => sub {
         my ( $h ) = @_;
@@ -75,29 +74,30 @@ my %get = (
     -server => sub {
         $_[0]->{-nph} ? $_[2]->{SERVER_SOFTWARE} || 'cmdline' : $get->( @_ );
     },
-    -set_cookie => sub { $_[0]->{-cookie} },
-    -window_target => sub { $_[0]->{-target} },
+    -type => sub {
+        my ( $type, $charset ) = @{ $_[0] }{qw/-type -charset/};
+        return if defined $type and $type eq q{};
+        $type ||= 'text/html';
+        $type .= "; charset=$charset" if $charset && $type !~ /\bcharset\b/;
+        $type;
+    },
 );
 
 sub get {
     my $self = shift;
-    my $field = _lc( shift );
+    my $norm = _normalize( shift );
     my ( $header, $env ) = @{ $self }{qw/header env/};
-    $field && ( $get{$field} || $get )->( $header, $field, $env );
+    ( $get{$norm} || $get )->( $header, $norm, $env );
 }
 
 my $set = sub { $_[0]->{$_[1]} = $_[2] };
 
 my %set = (
-    -content_disposition => sub { $set->( @_ ); delete $_[0]->{-attachment} },
-    -content_type => sub {
-        my ( $header, $norm, $value ) = @_;
-        if ( defined $value and $value ne q{} ) {
-            @{ $header }{qw/-type -charset/} = ( $value, q{} );
-        }
-        else {
-            carp "Can set '$norm' to neither undef nor an empty string";
-        }
+    -content_disposition => sub { delete $_[0]->{-attachment}; $set->( @_ ) },
+    -cookie => sub {
+        my ( $header, $value ) = @_[0, 2];
+        delete $header->{-date} if $value;
+        $header->{-cookie} = $value;
     },
     -date => sub {
         my ( $h ) = @_;
@@ -110,53 +110,49 @@ my %set = (
     -p3p => sub {
         carp "Can't assign to '-p3p' directly, use p3p_tags() instead";
     },
-    -server => sub {
-        my ( $h ) = @_;
-        croak $MODIFY if $h->{-nph};
-        $set->( @_ );
+    -server => sub { $_[0]->{-nph} and croak $MODIFY; $set->( @_ ) },
+    -type => sub {
+        my ( $header, $norm, $value ) = @_;
+        if ( defined $value and $value ne q{} ) {
+            @{ $header }{qw/-charset -type/} = ( q{}, $value );
+            return $value;
+        }
+        else {
+            carp "Can set '-content_type' to neither undef nor an empty string";
+        }
     },
-    -set_cookie => sub {
-        my ( $header, $value ) = @_[0, 2];
-        delete $header->{-date} if $value;
-        $header->{-cookie} = $value;
-    },
-    -window_target => sub { $_[0]->{-target} = $_[2] },
 );
 
 sub set {
-    my ( $self, $field, $value ) = @_;
-    $field = _lc( $field );
+    my $self = shift;
+    my $norm = _normalize( shift );
     my $header = $self->{header};
-    ( $set{$field} || $set )->( $header, $field, $value ) if $field;
-    $value;
+    $norm && ( $set{$norm} || $set )->( $header, $norm, @_ );
 }
 
 my $exists = sub { exists $_[0]->{$_[1]} };
 
 my %exists = (
     -content_disposition => sub { $exists->( @_ ) || $_[0]->{-attachment} },
-    -content_type => sub { !defined $_[0]->{-type} || $_[0]->{-type} ne q{} },
     -date => sub {
         my ( $h ) = @_;
         $h->{-nph} || $h->{-expires} || $h->{-cookie} || $exists->( @_ );
     },
     -server => sub { $_[0]->{-nph} || $exists->( @_ ) },
-    -set_cookie => sub { exists $_[0]->{-cookie} },
-    -window_target => sub { exists $_[0]->{-target} },
+    -type => sub { !defined $_[0]->{-type} || $_[0]->{-type} ne q{} },
 );
 
 sub exists {
     my $self = shift;
-    my $field = _lc( shift );
+    my $norm = _normalize( shift );
     my $header = $self->{header};
-    $field && ( $exists{$field} || $exists )->( $header, $field );
+    ( $exists{$norm} || $exists )->( $header, $norm );
 }
 
 my $delete = sub { delete $_[0]->{$_[1]} };
 
 my %delete = (
     -content_disposition => sub { delete @{$_[0]}{$_[1], '-attachment'} },
-    -content_type => sub { delete $_[0]->{-charset}; $_[0]->{-type} = q{} },
     -date => sub {
         my ( $h ) = @_;
         croak $MODIFY if $h->{-nph} or $h->{-cookie} or $h->{-expires};
@@ -165,22 +161,21 @@ my %delete = (
     -expires => $delete,
     -p3p => $delete,
     -server => sub { $_[0]->{-nph} and croak $MODIFY; $delete->( @_ ) },
-    -set_cookie => sub { delete $_[0]->{-cookie} },
-    -window_target => sub { delete $_[0]->{-target} },
+    -type => sub { delete $_[0]->{-charset}; $_[0]->{-type} = q{} },
 );
 
 sub delete {
     my $self   = shift;
-    my $field  = _lc( shift );
+    my $norm   = _normalize( shift );
     my $header = $self->{header};
 
-    if ( my $code = $delete{$field} ) {
-        my $value = defined wantarray && $self->get( $field );
-        $code->( $header, $field );
+    if ( my $code = $delete{$norm} ) {
+        my $value = defined wantarray && $self->get( $norm );
+        $code->( $header, $norm );
         return $value;
     }
 
-    delete $header->{ $field };
+    delete $header->{ $norm };
 }
 
 sub is_empty { !$_[0]->SCALAR }
@@ -353,11 +348,16 @@ sub FIRSTKEY {
 
 sub NEXTKEY { $_[0]->{iterator}->() }
 
-sub _lc {
-    my $str = lc shift;
-    $str = "-$str" if $str !~ /^-/;
-    substr( $str, 1 ) =~ tr/-/_/;
-    $str;
+my %alias_of = (
+    -content_type => '-type',   -window_target => '-target',
+    -cookies      => '-cookie', -set_cookie    => '-cookie',
+);
+
+sub _normalize { # hash function
+    my $norm = lc shift;
+    $norm = "-$norm" if $norm !~ /^-/;
+    substr( $norm, 1 ) =~ tr/-/_/;
+    $alias_of{ $norm } || $norm;
 }
 
 sub _ucfirst {
@@ -462,7 +462,7 @@ array references. See also C<flatten()>.
 
 =over 4
 
-=item $header = CGI::Header->new({ -type => 'text/plain', ... }[, \%ENV])
+=item $header = CGI::Header->new( { -type => 'text/plain', ... }[, \%ENV] )
 
 Given a header hash reference, returns a CGI::Header object
 which holds a reference to the original given argument:
@@ -479,11 +479,42 @@ C<delete()> or C<clear()>:
   $h->delete( 'Content-Disposition' );
   $h->clear;
 
+You can also pass the reference to the hash which contains your current
+environment, preceded by the header hash reference:
+
+  my $h = CGI::Header->new( $header, \%ENV );
+  $h->env; # => \%ENV
+
+NOTE: In this case, C<new()> doesn't check whether property names of C<$header>
+are normalized or not at all, and so you have to C<rehash()> the header hash
+reference explicitly when you aren't sure that they are normalized.
+
 =item $header = CGI::Header->new( -type => 'text/plain', ... )
 
-A shortcut for:
+It's roughly equivalent to:
 
-  my $header = CGI::Header->new({ -type => 'text/plain', ... });
+  my $h = CGI::Header->new({ -type => 'text/plain', ... })->rehash;
+
+Unlike C<rehash()>, if a property name is duplicated,
+that property will be overwritten silently:
+
+  my $h = CGI::Header->new(
+      -Type        => 'text/plain',
+      Content_Type => 'text/html'
+  );
+
+  $h->header->{-type}; # => "text/html"
+
+In addition to CGI.pm-compatible HTTP header properties,
+you can specify '-env' property which represents your current environment:
+
+  my $h = CGI::Header->new(
+      -type => 'text/plain',
+      -env  => \%ENV,
+  );
+
+  $h->header; # => { -type => 'text/plain' }
+  $h->env;    # => \%ENV
 
 =back
 
@@ -491,14 +522,22 @@ A shortcut for:
 
 =over 4
 
-=item $header->env
+=item $hashref = $header->env
 
 Returns the reference to the hash which contains your current environment.
-C<env()> defaults to C<\%ENV>.
+C<env()> defaults to C<\%ENV>. This module depends on the following
+elements of C<env()>:
 
-=item $header->header
+  SERVER_PROTOCOL
+  SERVER_SOFTWARE
+
+=item $hashref = $header->header
 
 Returns the header hash reference associated with this CGI::Header object.
+You can always pass the reference to C<CGI::header()> function
+to generate CGI response headers:
+
+  print CGI::header( $header->header );
 
 =item $self = $header->rehash
 
@@ -527,6 +566,16 @@ as you expect.
   #     '-content_length' => '3002'
   # }
 
+If a property name is duplicated, throws an exception:
+
+  $header->header;
+  # => {
+  #     -Type        => 'text/plain',
+  #     Content_Type => 'text/html',
+  # }
+
+  $header->rehash; # die "Property '-type' already exists"
+
 Normalized parameter names are:
 
 =over 4
@@ -552,11 +601,6 @@ This module converts them as follows:
  '-set_cookie'    -> '-cookie'
  '-cookies'       -> '-cookie'
  '-window_target' -> '-target'
-
-NOTE: C<new()> doesn't check whether parameter names are normalized
-or not at all,
-and so you have to C<rehash()> the header hash explicitly
-when you aren't sure that they are normalized.
 
 =item $value = $header->get( $field )
 
@@ -615,7 +659,7 @@ Returns a copy of this CGI::Header object.
 It's identical to:
 
   my %copy = %{ $header->header }; # shallow copy
-  my $clone = CGI::Header->new( \%copy );
+  my $clone = CGI::Header->new( \%copy, $header->env );
 
 =item $filename = $header->attachment
 
@@ -737,14 +781,14 @@ references. For example,
   use CGI::Header;
   use Plack::Util;
 
-  # untested
   sub psgi_header {
       my $self   = shift;
-      my %header = ref $_[0] eq 'HASH' ? %{ $_[0] } : @_;
-      my $header = CGI::Header->new(\%header, $self->env)->rehash;
+      my @args   = ref $_[0] eq 'HASH' ? %{ $_[0] } : @_;
+      my $header = CGI::Header->new( @args, -env => $self->env );
 
       # breaks encapsulation
-      $header{-charset} = $self->charset( $header{-charset} );
+      $header->header->{-charset}
+          = $self->charset( $header->header->{-charset} );
 
       $header->set( 'Pragma' => 'no-cache' ) if $self->cache;
 
@@ -857,14 +901,14 @@ You can't assign to the Expires header directly:
   # wrong
   $header->set( 'Expires' => '+3d' );
 
-Use expires() instead:
-
-  $header->expires( '+3d' );
-
 because the following behavior will surprise us:
 
   my $value = $header->get( 'Expires' );
   # => "Thu, 25 Apr 1999 00:40:33 GMT" (not "+3d")
+
+Use expires() instead:
+
+  $header->expires( '+3d' );
 
 =item P3P
 

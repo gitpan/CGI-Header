@@ -3,13 +3,30 @@ use warnings;
 use CGI::Header;
 use CGI::Cookie;
 use CGI::Util;
-use Test::More tests => 11;
+use Test::More tests => 12;
 use Test::Exception;
 
 can_ok 'CGI::Header', qw(
     new header env rehash clone clear delete exists get set is_empty
     p3p_tags expires nph attachment field_names each flatten
 );
+
+subtest '_normalize()' => sub {
+    my @data = (
+        'Foo'      => '-foo',
+        'Foo-Bar'  => '-foo_bar',
+        '-foo'     => '-foo',
+        '-foo_bar' => '-foo_bar',
+        '-content_type'  => '-type',
+        '-cookies'       => '-cookie',
+        '-set_cookie'    => '-cookie',
+        '-window_target' => '-target',
+    );
+
+    while ( my ($input, $expected) = splice @data, 0, 2 ) {
+        is CGI::Header::_normalize($input), $expected;
+    }
+};
 
 subtest 'new()' => sub {
     my %header = ();
@@ -30,20 +47,28 @@ subtest 'new()' => sub {
 
     $header = CGI::Header->new( -foo => 'bar' );
     is_deeply $header->header, { -foo => 'bar' };
-};
 
-subtest '_lc()' => sub {
-    my @data = (
-        'Foo'      => '-foo',
-        'Foo-Bar'  => '-foo_bar',
-        '-foo'     => '-foo',
-        '-foo_bar' => '-foo_bar',
+    $header = CGI::Header->new(
+        '-Charset'      => 'utf-8',
+        '-content_type' => 'text/plain',
+        'Set-Cookie'    => 'ID=123456; path=/',
+        '-expires'      => '+3d',
+        'foo'           => 'bar',
+        'foo-bar'       => 'baz',
+        'window_target' => 'ResultsWindow',
+        'charset'       => 'EUC-JP',
     );
-
-    while ( my ($input, $expected) = splice @data, 0, 2 ) {
-        is CGI::Header::_lc($input), $expected;
-    }
+    is_deeply $header->header, {
+        -type    => 'text/plain',
+        -charset => 'EUC-JP',
+        -cookie  => 'ID=123456; path=/',
+        -expires => '+3d',
+        -foo     => 'bar',
+        -foo_bar => 'baz',
+        -target  => 'ResultsWindow',
+    };
 };
+
 
 subtest 'basic' => sub {
     my %header;
@@ -84,14 +109,14 @@ subtest 'basic' => sub {
 };
 
 subtest 'rehash()' => sub {
-    my $header = CGI::Header->new(
+    my $header = CGI::Header->new({
         '-content_type' => 'text/plain',
         'Set-Cookie'    => 'ID=123456; path=/',
         '-expires'      => '+3d',
         'foo'           => 'bar',
         'foo-bar'       => 'baz',
         'window_target' => 'ResultsWindow',
-    );
+    });
 
     my $expected = $header->header;
 
@@ -106,6 +131,12 @@ subtest 'rehash()' => sub {
         -foo_bar => 'baz',
         -target  => 'ResultsWindow',
     };
+
+    $header = CGI::Header->new({
+        -Type        => 'text/plain',
+        Content_Type => 'text/html',
+    });
+    throws_ok { $header->rehash } qr{^Property '-type' already exists};
 };
 
 subtest 'clone()' => sub {
@@ -238,4 +269,19 @@ subtest 'each()' => sub {
     is_deeply \@got, \@expected;
 
     is $header->each(sub {}), $header, "should return current object itself";
+};
+
+subtest 'as_string()' => sub {
+    my $CRLF = "\015\012";
+    my $header = CGI::Header->new;
+    is $header->as_string, "Content-Type: text/html$CRLF";
+    is $header->as_string("\n"), "Content-Type: text/html\n";
+
+    $header->nph(1);
+    my $expected
+        = "HTTP/1.0 200 OK$CRLF"
+        . "Server: cmdline$CRLF"
+        . "Date: " . CGI::Util::expires() . $CRLF
+        . "Content-Type: text/html$CRLF";
+    is $header->as_string, $expected;
 };
