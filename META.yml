@@ -5,8 +5,8 @@ author:
 build_requires:
   CGI: 3.51
   CGI::Cookie: 0
+  CGI::PSGI: 0
   ExtUtils::MakeMaker: 6.59
-  Test::Base: 0.60
   Test::Exception: 0.31
   Test::MockTime: 0
   Test::More: 0.98
@@ -32,9 +32,8 @@ requires:
   CGI::Util: 1.5
   Carp: 1.10
   List::Util: 1.19
-  Scalar::Util: 1.19
   perl: 5.8.9
 resources:
   license: http://dev.perl.org/licenses/
   repository: https://github.com/anazawa/p5-CGI-Header
-version: 0.09
+version: 0.17
