@@ -1,5 +1,27 @@
 Revision history for Perl extension CGI::Header.
 
+0.18  Feb 9th, 2013
+
+  - You can pass a media type to new() in the following situation:
+
+      my $h = CGI::Header->new('text/plain');
+      $h->header; # => { -type => 'text/plain' }
+
+  - new() throws an exception in the following situation:
+
+      my $h = CGI::Header->new( -foo => 'bar', '-baz' );
+      # die "Odd number of elements in hash assignment"
+
+  [STATE OF THIS MODULE]
+
+    The following methods are unstable:
+
+      - $h->set( 'Content-Type => $value )
+      - $h->set( 'P3P' => $value )
+      - $h->set( 'Expires' => $value )
+
+        I'm not sure about how to process these headers properly at this time.
+
 0.17  Jan 18th, 2013
 
   [DOCUMENTATION]
