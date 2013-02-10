@@ -6,7 +6,7 @@ use CGI::Util qw//;
 use Carp qw/carp croak/;
 use List::Util qw/first/;
 
-our $VERSION = '0.18';
+our $VERSION = '0.19';
 
 my $MODIFY = 'Modification of a read-only value attempted';
 
@@ -219,7 +219,7 @@ sub p3p_tags {
 
 sub flatten {
     my $self   = shift;
-    my $level  = defined $_[0] ? int shift : 1;
+    my $level  = defined $_[0] ? int shift : 2;
     my $server = $self->{env}{SERVER_SOFTWARE} || 'cmdline';
     my %copy   = %{ $self->{header} };
 
@@ -237,11 +237,10 @@ sub flatten {
         push @headers, 'P3P', qq{policyref="/w3c/p3p.xml", CP="$tags"};
     }
 
-    if ( ref $cookie eq 'ARRAY' and $level ) {
-        push @headers, map { ('Set-Cookie', $_) } @{ $cookie };
-    }
-    elsif ( $cookie ) {
-        push @headers, 'Set-Cookie', $cookie;
+    if ( $cookie ) {
+        my @cookies = $level && ref $cookie eq 'ARRAY' ? @{$cookie} : $cookie;
+           @cookies = map { "$_" } @cookies if $level > 1;
+        push @headers, map { ('Set-Cookie', $_) } @cookies;
     }
 
     push @headers, 'Expires', _expires($expires) if $expires;
@@ -301,7 +300,6 @@ sub as_string {
     # add response headers
     $self->each(sub {
         my ( $field, $value ) = @_;
-        $value = $value->as_string if ref $value eq 'CGI::Cookie';
         $value =~ s/$eol(\s)/$1/g;
         $value =~ s/$eol|\015|\012//g;
         push @lines, "$field: $value";
@@ -346,6 +344,7 @@ sub _ucfirst {
 my %alias_of = (
     -content_type => '-type',   -window_target => '-target',
     -cookies      => '-cookie', -set_cookie    => '-cookie',
+    -uri => '-location', -url => '-location', # for CGI::redirect()
 );
 
 sub _lc {
@@ -391,7 +390,7 @@ CGI::Header - Adapter for CGI::header() function
 
 =head1 VERSION
 
-This document referes to CGI::Header version 0.17.
+This document referes to CGI::Header version 0.19.
 
 =head1 DESCRIPTION
 
@@ -511,7 +510,7 @@ you can specify '-env' property which represents your current environment:
 
 A shortcut for:
 
-  my $h = CGI::Header->new({ -type => $media_type });
+  my $header = CGI::Header->new({ -type => $media_type });
 
 =back
 
@@ -588,6 +587,8 @@ This module converts them as follows:
  '-set_cookie'    -> '-cookie'
  '-cookies'       -> '-cookie'
  '-window_target' -> '-target'
+ '-uri'           -> '-location'
+ '-url'           -> '-location'
 
 If a property name is duplicated, throws an exception:
 
@@ -747,28 +748,29 @@ Any return values of the callback routine are ignored.
 
 =item @headers = $header->flatten
 
-=item @headers = $header->flatten( $is_recursive )
-
 Returns pairs of fields and values. 
-This method flattens the Set-Cookie headers recursively by default.
-The optional C<$is_recursive> argument determines
-whether to flatten them recursively.
 
-  my $header = CGI::Header->new( -cookie => ['cookie1', 'cookie2'] );
+  # $cookie1 and $cookie2 are CGI::Cookie objects
+  my $header = CGI::Header->new( -cookie => [$cookie1, $cookie2] );
 
   $header->flatten;
   # => (
-  #     'Set-Cookie'   => 'cookie1',
-  #     'Set-Cookie'   => 'cookie2',
-  #     'Date'         => 'Thu, 25 Apr 1999 00:40:33 GMT',
-  #     'Content-Type' => 'text/html'
+  #     "Set-Cookie" => "$cookie1",
+  #     "Set-Cookie" => "$cookie2",
+  #     ...
+  # )
+
+  $header->flatten(1);
+  # => (
+  #     "Set-Cookie" => $cookie1,
+  #     "Set-Cookie" => $cookie2,
+  #     ...
   # )
 
   $header->flatten(0);
   # => (
-  #     'Set-Cookie'   => ['cookie1', 'cookie2'],
-  #     'Date'         => 'Thu, 25 Apr 1999 00:40:33 GMT',
-  #     'Content-Type' => 'text/html'
+  #     "Set-Cookie" => [$cookie1, $cookie2],
+  #     ...
   # )
 
 =item $header->as_string
