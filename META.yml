@@ -31,9 +31,10 @@ no_index:
 requires:
   CGI::Util: 1.5
   Carp: 1.10
+  Exporter: 0
   List::Util: 1.19
   perl: 5.8.9
 resources:
   license: http://dev.perl.org/licenses/
   repository: https://github.com/anazawa/p5-CGI-Header
-version: 0.19
+version: 0.20
