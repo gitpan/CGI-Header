@@ -6,7 +6,7 @@ use CGI::Util qw//;
 use Carp qw/carp croak/;
 use List::Util qw/first/;
 
-our $VERSION = '0.21';
+our $VERSION = '0.22';
 
 my $MODIFY = 'Modification of a read-only value attempted';
 
@@ -390,7 +390,7 @@ CGI::Header - Adapter for CGI::header() function
 
 =head1 VERSION
 
-This document referes to CGI::Header version 0.21.
+This document refers to CGI::Header version 0.22.
 
 =head1 DEPENDENCIES
 
