@@ -8,9 +8,10 @@ use Exporter 'import';
 our @EXPORT_OK = qw( psgi_header psgi_redirect );
 
 sub psgi_header {
-    my $self = shift;
-    my @args = ref $_[0] eq 'HASH' ? %{ $_[0] } : @_;
-    my $crlf = $self->crlf;
+    my $self     = shift;
+    my @args     = ref $_[0] eq 'HASH' ? %{ $_[0] } : @_;
+    my $crlf     = $self->crlf;
+    my $no_cache = $self->can('no_cache') && $self->no_cache;
 
     unshift @args, '-type' if @args == 1;
 
@@ -20,12 +21,17 @@ sub psgi_header {
     );
 
     $header->nph( 0 );
+    $header->expires( 'now' ) if $no_cache;
+
+    if ( ($no_cache or $self->cache) and !$header->exists('Pragma') ) {
+        $header->set( 'Pragma' => 'no-cache' );
+    }
 
     my $status = $header->delete('Status') || '200';
        $status =~ s/\D*$//;
 
-    # status with no entity body
-    if ( $status < 200 || $status == 204 || $status == 304 ) {
+    # See Plack::Util::status_with_no_entity_body()
+    if ( $status < 200 or $status == 204 or $status == 304 ) {
         $header->delete( $_ ) for qw( Content-Type Content-Length );
     }
 
@@ -48,8 +54,6 @@ sub psgi_header {
         push @headers, $field, $value;
     });
 
-    push @headers, 'Pragma', 'no-cache' if $self->cache;
-
     return $status, \@headers;
 }
 
@@ -60,7 +64,7 @@ sub psgi_redirect {
     unshift @args, '-location' if @args == 1;
 
     return $self->psgi_header(
-        -location => $self->url,
+        -location => $self->self_url,
         -status => '302',
         -type => q{},
         @args,
@@ -96,9 +100,7 @@ Your class has to implement the following methods.
 
 Returns the character set sent to the browser.
 
-=item $query->url
-
-Returns the script's URL.
+=item $query->self_url
 
 =item $query->cache
 
