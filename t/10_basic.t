@@ -1,6 +1,7 @@
 use strict;
 use warnings;
 use Test::MockTime qw/set_fixed_time/;
+use CGI;
 use CGI::Header;
 use CGI::Cookie;
 use CGI::Util;
@@ -36,6 +37,7 @@ subtest '_lc()' => sub {
 subtest 'new()' => sub {
     my %header = ();
     my $header = CGI::Header->new( \%header );
+    is $header->query, $CGI::Q;
     is $header->env, \%ENV;
     is $header->header, \%header;
     is_deeply $header->header, {};
@@ -43,10 +45,10 @@ subtest 'new()' => sub {
     $header = CGI::Header->new;
     is_deeply $header->header, {};
 
-    my %env;
+    my $query = CGI->new;
     %header = ( -foo => 'bar' );
-    $header = CGI::Header->new( \%header, \%env );
-    is $header->env, \%env;
+    $header = CGI::Header->new( \%header, $query );
+    is $header->query, $query;
     is $header->header, \%header;
     is_deeply $header->header, { -foo => 'bar' };
 
@@ -79,10 +81,8 @@ subtest 'new()' => sub {
     throws_ok { CGI::Header->new( -foo => 'bar', '-baz' ) }
         qr{^Odd number of elements in hash assignment};
 
-    # You can set the Env header,
-    # while I don't know what the Env header is ;)
-    $header = CGI::Header->new( -env => 'a plain string' );
-    is_deeply $header->header, { -env => 'a plain string' };
+    $header = CGI::Header->new( -query => 'a plain string' );
+    is_deeply $header->header, { -query => 'a plain string' };
 };
 
 subtest 'basic' => sub {
@@ -112,8 +112,10 @@ subtest 'basic' => sub {
     # is_empty()
     %header = ();
     ok !$header->is_empty;
+    ok $header;
     %header = ( -type => q{} );
     ok $header->is_empty;
+    ok !$header;
 
     # delete()
     %header = ();
@@ -160,9 +162,9 @@ subtest 'clone()' => sub {
     isnt $clone->header, $header->header;
     is_deeply $clone->header, $header->header;
 
-    my %env;
-    $header = CGI::Header->new( {}, \%env );
-    is $header->clone->env, \%env;
+    my $query = CGI->new;
+    $header = CGI::Header->new( {}, $query );
+    is $header->clone->query, $query;
 };
 
 subtest 'nph()' => sub {
@@ -245,7 +247,7 @@ subtest 'flatten()' => sub {
         'Set-Cookie',     "$cookie2",
         'Date',           CGI::Util::expires(),
         'Content-length', '12345',
-        'Content-Type',   'text/html',
+        'Content-Type',   'text/html; charset=ISO-8859-1',
     );
     is_deeply \@got, \@expected, 'default';
 
@@ -255,7 +257,7 @@ subtest 'flatten()' => sub {
         'Set-Cookie',     [ $cookie1, $cookie2 ],
         'Date',           CGI::Util::expires(),
         'Content-length', '12345',
-        'Content-Type',   'text/html',
+        'Content-Type',   'text/html; charset=ISO-8859-1',
     );
     is_deeply \@got, \@expected, 'not recursive';
 };
@@ -278,7 +280,7 @@ subtest 'each()' => sub {
     my @expected = (
         'Status',         '304 Not Modified',
         'Content-length', '12345',
-        'Content-Type',   'text/html',
+        'Content-Type',   'text/html; charset=ISO-8859-1',
     );
 
     is_deeply \@got, \@expected;
@@ -287,16 +289,6 @@ subtest 'each()' => sub {
 };
 
 subtest 'as_string()' => sub {
-    my $CRLF = "\015\012";
     my $header = CGI::Header->new;
-    is $header->as_string, "Content-Type: text/html$CRLF";
-    is $header->as_string("\n"), "Content-Type: text/html\n";
-
-    $header->nph(1);
-    my $expected
-        = "HTTP/1.0 200 OK$CRLF"
-        . "Server: cmdline$CRLF"
-        . "Date: " . CGI::Util::expires() . $CRLF
-        . "Content-Type: text/html$CRLF";
-    is $header->as_string, $expected;
+    is "$header", CGI::header();
 };

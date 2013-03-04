@@ -2,11 +2,12 @@ package CGI::Header;
 use 5.008_009;
 use strict;
 use warnings;
-use CGI::Util qw//;
+use overload q{""} => 'as_string', bool => 'SCALAR', fallback => 1;
 use Carp qw/carp croak/;
 use List::Util qw/first/;
+use Scalar::Util qw/blessed/;
 
-our $VERSION = '0.22';
+our $VERSION = '0.30';
 
 my $MODIFY = 'Modification of a read-only value attempted';
 
@@ -15,15 +16,15 @@ sub new {
     my @args = @_;
 
     if ( ref $args[0] eq 'HASH' ) {
-        @{ $self }{qw/header env/} = splice @args, 0, 2;
+        @{ $self }{qw/header query/} = splice @args, 0, 2;
     }
     elsif ( @args % 2 == 0 ) {
         my $header = $self->{header} = {};
         while ( my ($key, $value) = splice @args, 0, 2 ) {
             $header->{ _lc($key) } = $value; # force overwrite
         }
-        if ( ref $header->{-env} eq 'HASH' ) {
-            $self->{env} = delete $header->{-env};
+        if ( blessed $header->{-query} ) {
+            $self->{query} = delete $header->{-query};
         }
     }
     elsif ( @args == 1 ) {
@@ -33,14 +34,18 @@ sub new {
         croak 'Odd number of elements in hash assignment';
     }
 
-    $self->{env} ||= \%ENV;
-
     $self;
 }
 
 sub header { $_[0]->{header} }
 
-sub env { $_[0]->{env} }
+sub query { $_[0]->{query} ||= do { require CGI; CGI::self_or_default() } }
+
+# This method is obsolete and will be removed in 0.31
+sub env {
+    my $self = shift;
+    $self->{env} ||= $self->query->can('env') ? $self->{query}->env : \%ENV;
+}
 
 sub rehash {
     my $self   = shift;
@@ -56,26 +61,28 @@ sub rehash {
     $self;
 }
 
-my $get = sub { $_[0]->{$_[1]} };
+my $GET = sub { $_[1]->{$_[2]} };
 
-my %get = (
+my %GET = (
     -content_disposition => sub {
-        my $filename = $_[0]->{-attachment};
-        $filename ? qq{attachment; filename="$filename"} : $get->( @_ );
+        my $filename = $_[1]->{-attachment};
+        $filename ? qq{attachment; filename="$filename"} : $GET->( @_ );
     },
-    -date => sub { _date_is_fixed( @_ ) ? _expires() : $get->( @_ ) },
-    -expires => sub { my $v = $get->( @_ ); $v ? _expires( $v ) : undef },
+    -date => sub { _date_is_fixed( $_[1] ) ? _expires() : $GET->( @_ ) },
+    -expires => sub { my $v = $GET->( @_ ); $v ? _expires( $v ) : undef },
     -p3p => sub {
-        my $tags = $get->( @_ );
+        my $tags = $GET->( @_ );
         $tags = join ' ', @{ $tags } if ref $tags eq 'ARRAY';
         $tags ? qq{policyref="/w3c/p3p.xml", CP="$tags"} : undef;
     },
+    -pragma => sub { $_[0]->query->cache ? 'no-cache' : $GET->( @_ ) },
     -server => sub {
-        $_[0]->{-nph} ? $_[2]->{SERVER_SOFTWARE} || 'cmdline' : $get->( @_ );
+        $_[1]->{-nph} ? $_[0]->query->server_software : $GET->( @_ );
     },
     -type => sub {
-        my ( $type, $charset ) = @{ $_[0] }{qw/-type -charset/};
+        my ( $type, $charset ) = @{ $_[1] }{qw/-type -charset/};
         return if defined $type and $type eq q{};
+        $charset = $_[0]->query->charset unless defined $charset;
         $type ||= 'text/html';
         $type .= "; charset=$charset" if $charset && $type !~ /\bcharset\b/;
         $type;
@@ -85,25 +92,26 @@ my %get = (
 sub get {
     my $self = shift;
     my $key = _lc( shift );
-    my ( $header, $env ) = @{ $self }{qw/header env/};
-    ( $get{$key} || $get )->( $header, $key, $env );
+    my $get = $GET{$key} || $GET;
+    $self->$get( $self->{header}, $key );
 }
 
-my $set = sub { $_[0]->{$_[1]} = $_[2] };
+my $set = sub { $_[1]->{$_[2]} = $_[3] };
 
 my %set = (
-    -content_disposition => sub { delete $_[0]->{-attachment}; $set->( @_ ) },
-    -cookie => sub { $_[2] and delete $_[0]->{-date}; $set->( @_ ) },
-    -date => sub { _date_is_fixed( @_ ) and croak $MODIFY; $set->( @_ ) },
+    -content_disposition => sub { delete $_[1]->{-attachment}; $set->( @_ ) },
+    -cookie => sub { $_[3] and delete $_[1]->{-date}; $set->( @_ ) },
+    -date => sub { _date_is_fixed( $_[1] ) and croak $MODIFY; $set->( @_ ) },
     -expires => sub {
         carp "Can't assign to '-expires' directly, use expires() instead";
     },
     -p3p => sub {
         carp "Can't assign to '-p3p' directly, use p3p_tags() instead";
     },
-    -server => sub { $_[0]->{-nph} and croak $MODIFY; $set->( @_ ) },
+    -pragma => sub { $_[0]->query->cache and croak $MODIFY; $set->( @_ ) },
+    -server => sub { $_[1]->{-nph} and croak $MODIFY; $set->( @_ ) },
     -type => sub {
-        my ( $header, $norm, $value ) = @_;
+        my ( $self, $header, $norm, $value ) = @_;
         if ( defined $value and $value ne q{} ) {
             @{ $header }{qw/-charset -type/} = ( q{}, $value );
             return $value;
@@ -118,34 +126,36 @@ sub set { # unstable
     my $self = shift;
     my $key = _lc( shift );
     my $header = $self->{header};
-    $key && ( $set{$key} || $set )->( $header, $key, @_ );
+    $key && ( $set{$key} || $set )->( $self, $header, $key, @_ );
 }
 
-my $exists = sub { exists $_[0]->{$_[1]} };
+my $EXISTS = sub { exists $_[1]->{$_[2]} };
 
-my %exists = (
-    -content_disposition => sub { $exists->( @_ ) || $_[0]->{-attachment} },
-    -date => sub { _date_is_fixed( @_ ) || $exists->( @_ ) },
-    -server => sub { $_[0]->{-nph} || $exists->( @_ ) },
-    -type => sub { my $v = $_[0]->{-type}; !defined $v || $v ne q{} },
+my %EXISTS = (
+    -content_disposition => sub { $EXISTS->( @_ ) || $_[1]->{-attachment} },
+    -date => sub { _date_is_fixed( $_[1] ) || $EXISTS->( @_ ) },
+    -pragma => sub { $_[0]->query->cache || $EXISTS->( @_ ) },
+    -server => sub { $_[1]->{-nph} || $EXISTS->( @_ ) },
+    -type => sub { my $v = $_[1]->{-type}; !defined $v || $v ne q{} },
 );
 
 sub exists {
     my $self = shift;
     my $key = _lc( shift );
-    my $header = $self->{header};
-    ( $exists{$key} || $exists )->( $header, $key );
+    my $exists = $EXISTS{$key} || $EXISTS;
+    $self->$exists( $self->{header}, $key );
 }
 
-my $delete = sub { delete $_[0]->{$_[1]} };
+my $DELETE = sub { delete $_[1]->{$_[2]} };
 
-my %delete = (
-    -content_disposition => sub { delete @{$_[0]}{$_[1], '-attachment'} },
-    -date => sub { _date_is_fixed( @_ ) and croak $MODIFY; $delete->( @_ ) },
-    -expires => $delete,
-    -p3p => $delete,
-    -server => sub { $_[0]->{-nph} and croak $MODIFY; $delete->( @_ ) },
-    -type => sub { my ( $h ) = @_; delete $h->{-charset}; $h->{-type} = q{} },
+my %DELETE = (
+    -content_disposition => sub { delete @{$_[1]}{$_[2], '-attachment'} },
+    -date => sub { _date_is_fixed($_[1]) and croak $MODIFY; $DELETE->( @_ ) },
+    -expires => $DELETE,
+    -p3p => $DELETE,
+    -pragma => sub { $_[0]->query->cache and croak $MODIFY; $DELETE->( @_ ) },
+    -server => sub { $_[1]->{-nph} and croak $MODIFY; $DELETE->( @_ ) },
+    -type => sub { my $h = $_[1]; delete $h->{-charset}; $h->{-type} = q{} },
 );
 
 sub delete {
@@ -153,9 +163,9 @@ sub delete {
     my $key    = _lc( shift );
     my $header = $self->{header};
 
-    if ( my $code = $delete{$key} ) {
+    if ( my $delete = $DELETE{$key} ) {
         my $value = defined wantarray && $self->get( $key );
-        $code->( $header, $key );
+        $self->$delete( $header, $key );
         return $value;
     }
 
@@ -167,13 +177,14 @@ sub is_empty { !$_[0]->SCALAR }
 sub clear {
     my $self = shift;
     %{ $self->{header} } = ( -type => q{} );
+    $self->query->cache( 0 );
     $self;
 }
 
 sub clone {
     my $self = shift;
     my %copy = %{ $self->{header} };
-    ref( $self )->new( \%copy, $self->{env} );
+    ref( $self )->new( \%copy, $self->{query} );
 }
 
 BEGIN {
@@ -217,18 +228,23 @@ sub p3p_tags {
     return;
 }
 
+sub cache {
+    my $self = shift;
+    $self->query->cache(@_);
+}
+
 sub flatten {
-    my $self   = shift;
-    my $level  = defined $_[0] ? int shift : 2;
-    my $server = $self->{env}{SERVER_SOFTWARE} || 'cmdline';
-    my %copy   = %{ $self->{header} };
+    my $self  = shift;
+    my $level = defined $_[0] ? int shift : 2;
+    my $query = $self->query;
+    my %copy  = %{ $self->{header} };
 
     my @headers;
 
     my ( $cookie, $expires, $nph, $status, $target )
         = delete @copy{qw/-cookie -expires -nph -status -target/};
 
-    push @headers, 'Server', $server        if $nph;
+    push @headers, 'Server', $query->server_software if $nph;
     push @headers, 'Status', $status        if $status;
     push @headers, 'Window-Target', $target if $target;
 
@@ -245,6 +261,7 @@ sub flatten {
 
     push @headers, 'Expires', _expires($expires) if $expires;
     push @headers, 'Date', _expires() if $expires or $cookie or $nph;
+    push @headers, 'Pragma', 'no-cache' if $query->cache;
 
     if ( my $fn = delete $copy{-attachment} ) {
         push @headers, 'Content-Disposition', qq{attachment; filename="$fn"};
@@ -258,6 +275,7 @@ sub flatten {
     }
 
     if ( !defined $type or $type ne q{} ) {
+        $charset = $query->charset unless defined $charset;
         my $ct = $type || 'text/html';
         $ct .= "; charset=$charset" if $charset && $ct !~ /\bcharset\b/;
         push @headers, 'Content-Type', $ct;
@@ -286,26 +304,7 @@ sub field_names { keys %{{ $_[0]->flatten(0) }} }
 
 sub as_string {
     my $self = shift;
-    my $eol  = defined $_[0] ? shift : "\015\012";
-
-    my @lines;
-
-    # add Status-Line
-    if ( $self->nph ) {
-        my $protocol = $self->env->{SERVER_PROTOCOL} || 'HTTP/1.0';
-        my $status   = $self->get('Status')          || '200 OK';
-        push @lines, "$protocol $status";
-    }
-
-    # add response headers
-    $self->each(sub {
-        my ( $field, $value ) = @_;
-        $value =~ s/$eol(\s)/$1/g;
-        $value =~ s/$eol|\015|\012//g;
-        push @lines, "$field: $value";
-    });
-
-    join $eol, @lines, q{};
+    $self->query->header( $self->{header} );
 }
 
 BEGIN {
@@ -316,7 +315,9 @@ BEGIN {
 sub SCALAR {
     my $self = shift;
     my $header = $self->{header};
-    !defined $header->{-type} || first { $_ } values %{ $header };
+    !defined $header->{-type}
+        or first { $_ } values %{ $header }
+        or $self->query->cache;
 }
 
 sub FIRSTKEY {
@@ -327,7 +328,10 @@ sub FIRSTKEY {
 
 sub NEXTKEY { $_[0]->{iterator}->() }
 
-BEGIN { *_expires = \&CGI::Util::expires }
+BEGIN {
+    require CGI::Util;
+    *_expires = \&CGI::Util::expires;
+}
 
 sub _date_is_fixed {
     my $header = shift;
@@ -364,7 +368,10 @@ CGI::Header - Adapter for CGI::header() function
 
 =head1 SYNOPSIS
 
+  use CGI;
   use CGI::Header;
+
+  my $query = CGI->new;
 
   # CGI.pm-compatible HTTP header properties
   my $header = {
@@ -379,7 +386,7 @@ CGI::Header - Adapter for CGI::header() function
   };
 
   # create a CGI::Header object
-  my $h = CGI::Header->new( $header );
+  my $h = CGI::Header->new( $header, $query );
 
   # update $header
   $h->set( 'Content-Length' => 3002 );
@@ -390,7 +397,7 @@ CGI::Header - Adapter for CGI::header() function
 
 =head1 VERSION
 
-This document refers to CGI::Header version 0.22.
+This document refers to CGI::Header version 0.30.
 
 =head1 DEPENDENCIES
 
@@ -456,7 +463,7 @@ array references. See L<CGI::Header::PSGI>.
 
 =over 4
 
-=item $header = CGI::Header->new( { -type => 'text/plain', ... }[, \%ENV] )
+=item $header = CGI::Header->new( { -type => 'text/plain', ... }[, $query] )
 
 Given a header hash reference, returns a CGI::Header object
 which holds a reference to the original given argument:
@@ -473,11 +480,11 @@ C<delete()> or C<clear()>:
   $h->delete( 'Content-Disposition' );
   $h->clear;
 
-You can also pass the reference to the hash which contains your current
-environment, preceded by the header hash reference:
+You can also pass your query object, preceded by the header hash ref.:
 
-  my $h = CGI::Header->new( $header, \%ENV );
-  $h->env; # => \%ENV
+  my $query = CGI->new;
+  my $h = CGI::Header->new( $header, $query );
+  $h->query; # => $query
 
 NOTE: In this case, C<new()> doesn't check whether property names of C<$header>
 are normalized or not at all, and so you have to C<rehash()> the header hash
@@ -500,15 +507,17 @@ that property will be overwritten silently:
   $h->header->{-type}; # => "text/html"
 
 In addition to CGI.pm-compatible HTTP header properties,
-you can specify '-env' property which represents your current environment:
+you can specify '-query' property which represents your query object:
+
+  my $query = CGI->new;
 
   my $h = CGI::Header->new(
-      -type => 'text/plain',
-      -env  => \%ENV,
+      -type  => 'text/plain',
+      -query => $query,
   );
 
   $h->header; # => { -type => 'text/plain' }
-  $h->env;    # => \%ENV
+  $h->query;  # => $query
 
 =item $header = CGI::Header->new( $media_type )
 
@@ -522,7 +531,14 @@ A shortcut for:
 
 =over 4
 
+=item $query = $header->query
+
+Returns your current query object. C<query()> defaults to the Singleton
+instance of CGI.pm (C<$CGI::Q>).
+
 =item $hashref = $header->env
+
+This method is obsolete and will be removed in 0.31.
 
 Returns the reference to the hash which contains your current environment.
 C<env()> defaults to C<\%ENV>. This module depends on the following
@@ -779,28 +795,9 @@ Returns pairs of fields and values.
 
 =item $header->as_string
 
-=item $header->as_string( $eol )
+A shortcut for:
 
-Returns the header fields as a formatted MIME header.
-The optional C<$eol> parameter specifies the line ending sequence to use.
-The default is C<\015\012>.
-
-When valid multi-line headers are included, this method will always output
-them back as a single line, according to the folding rules of RFC 2616:
-the newlines will be removed, while the white space remains.
-
-Unlike CGI.pm, when invalid newlines are included,
-this module removes them instead of throwing exceptions.
-
-If C<< $header->nph >> is true, the Status-Line will be added to
-the beginning of response headers automatically.
-
-  $header->nph(1);
-
-  $header->as_string;
-  # HTTP/1.1 200 OK
-  # Server: Apache/1.3.27 (Unix)
-  # ...
+  $header->query->header( $header->header );
 
 =back
 
@@ -836,7 +833,37 @@ You can also iterate through the tied hash:
 
 See also L<perltie>.
 
+=head2 OVERLOADED OPERATORS
+
+The following operators are L<overload>ed:
+
+ ""   -> as_string
+ bool -> SCALAR
+
 =head1 EXAMPLES
+
+=head2 WRITING Blosxom PLUGINS
+
+The following plugin just adds the Content-Length header
+to CGI response headers sent by blosxom.cgi:
+
+  package content_length;
+  use CGI::Header;
+
+  sub start {
+      !$blosxom::static_entries;
+  }
+
+  sub last {
+      my $h = CGI::Header->new( $blosxom::header );
+      $h->set( 'Content-Length' => length $blosxom::output );
+  }
+
+  1;
+
+L<Blosxom|http://blosxom.sourceforge.net/> depends on the procedural
+interface of CGI.pm, and so you don't have to pass
+C<$query> to C<new()> in this case.
 
 =head2 CONVERTING TO HTTP::Headers OBJECTS
 
@@ -910,6 +937,17 @@ You can't assign to the P3P header directly:
 C<CGI::header()> restricts where the policy-reference file is located,
 and so you can't modify the location (C</w3c/p3p.xml>).
 You're allowed to set P3P tags using C<p3p_tags()>.
+
+=item Pragma
+
+If the following condition is met, the Pragma header will be set
+automatically, and also the header field will become read-only:
+
+  if ( $header->query->cache ) {
+      my $pragma = $header->get('Pragma'); # => 'no-cache'
+      $header->set( 'Pragma' => 'no-cache' ); # wrong
+      $header->delete('Pragma'); # wrong
+  }
 
 =item Server
 
