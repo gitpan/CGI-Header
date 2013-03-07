@@ -11,26 +11,26 @@ use Test::Exception;
 set_fixed_time( 1341637509 );
 
 can_ok 'CGI::Header', qw(
-    new header env rehash clone clear delete exists get set is_empty
+    new header query rehash clone clear delete exists get set is_empty
     p3p_tags expires nph attachment field_names each flatten
 );
 
-subtest '_lc()' => sub {
+subtest '_normalize()' => sub {
     my @data = (
-        'Foo'      => '-foo',
-        'Foo-Bar'  => '-foo_bar',
-        '-foo'     => '-foo',
-        '-foo_bar' => '-foo_bar',
-        '-content_type'  => '-type',
-        '-cookies'       => '-cookie',
-        '-set_cookie'    => '-cookie',
-        '-window_target' => '-target',
-        '-uri' => '-location',
-        '-url' => '-location',
+        'Foo'      => 'foo',
+        'Foo-Bar'  => 'foo_bar',
+        '-foo'     => 'foo',
+        '-foo_bar' => 'foo_bar',
+        '-content_type'  => 'type',
+        '-cookies'       => 'cookie',
+        '-set_cookie'    => 'cookie',
+        '-window_target' => 'target',
+        '-uri' => 'location',
+        '-url' => 'location',
     );
 
     while ( my ($input, $expected) = splice @data, 0, 2 ) {
-        is CGI::Header::_lc($input), $expected;
+        is( CGI::Header->_normalize($input), $expected );
     }
 };
 
@@ -38,7 +38,6 @@ subtest 'new()' => sub {
     my %header = ();
     my $header = CGI::Header->new( \%header );
     is $header->query, $CGI::Q;
-    is $header->env, \%ENV;
     is $header->header, \%header;
     is_deeply $header->header, {};
 
