@@ -7,14 +7,13 @@ use Carp qw/carp croak/;
 use List::Util qw/first/;
 use Scalar::Util qw/blessed/;
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 
 our $MODIFY = 'Modification of a read-only value attempted';
 
 my %ALIAS = (
     content_type => 'type',   window_target => 'target',
     cookies      => 'cookie', set_cookie    => 'cookie',
-    uri => 'location', url => 'location', # for CGI::redirect()
 );
 
 sub get_alias {
@@ -207,7 +206,7 @@ sub clear {
 sub clone {
     my $self = shift;
     my %copy = %{ $self->{header} };
-    ref( $self )->new( \%copy, $self->{query} );
+    blessed( $self )->new( \%copy, $self->{query} );
 }
 
 BEGIN {
@@ -407,7 +406,7 @@ CGI::Header - Adapter for CGI::header() function
 
 =head1 VERSION
 
-This document refers to CGI::Header version 0.31.
+This document refers to CGI::Header version 0.32.
 
 =head1 DEPENDENCIES
 
@@ -553,17 +552,6 @@ If the alias doesn't exist, then C<undef> is returned.
 Returns your current query object. C<query()> defaults to the Singleton
 instance of CGI.pm (C<$CGI::Q>).
 
-=item $hashref = $header->env
-
-This method is obsolete and will be removed in 0.31.
-
-Returns the reference to the hash which contains your current environment.
-C<env()> defaults to C<\%ENV>. This module depends on the following
-elements of C<env()>:
-
-  SERVER_PROTOCOL
-  SERVER_SOFTWARE
-
 =item $hashref = $header->header
 
 Returns the header hash reference associated with this CGI::Header object.
@@ -624,8 +612,6 @@ This module converts them as follows:
  '-set_cookie'    -> '-cookie'
  '-cookies'       -> '-cookie'
  '-window_target' -> '-target'
- '-uri'           -> '-location'
- '-url'           -> '-location'
 
 If a property name is duplicated, throws an exception:
 
