@@ -20,23 +20,63 @@ sub new {
     $class->SUPER::new( @args );
 }
 
-for my $method (qw/flatten get exists/) {
-    my $orig = "SUPER::$method";
-    my $code = sub {
+my %GET = (
+    content_type => sub {
+        my $self = shift; 
+        my $header = $self->{header};
+        local $header->{-type} = q{} if !exists $header->{-type};
+        $self->SUPER::get( @_ );
+    },
+    location => sub {
+        my ( $self, $prop ) = @_; 
+        $self->{header}->{$prop} || $self->_self_url;
+    },
+    status => sub {
+        my ( $self, $prop ) = @_; 
+        my $status = $self->{header}->{$prop};
+        defined $status ? ( $status ne q{} ? $status : undef ) : '302 Found';
+    },
+);
+
+sub get {
+    my $self = shift;
+    my $prop = $self->lc( shift );
+    my $get = $GET{$prop} || 'SUPER::get';
+    $self->$get( "-$prop" );
+}
+
+my %EXISTS = (
+    content_type => sub {
         my $self = shift;
         my $header = $self->{header};
-        local $header->{-location} = $self->_self_url if !$header->{-location};
-        local $header->{-status} = '302 Found' if !defined $header->{-status};
-        local $header->{-type} = q{} if !exists $header->{-type};
-        $self->$orig( @_ );
-    };
+        my $type = exists $header->{-type} ? $header->{-type} : q{};
+        !defined $type or $type ne q{};
+    },
+    location => sub {
+        1;
+    },
+    status => sub {
+        my ( $self, $prop ) = @_;
+        my $status = $self->{header}->{$prop};
+        !defined $status or $status ne q{};
+    },
+);
 
-    no strict 'refs';
-    *{ $method } = $code;
+sub exists {
+    my $self = shift;
+    my $key = $self->lc( shift );
+    my $exists = $EXISTS{$key} || 'SUPER::exists';
+    $self->$exists( "-$key" );
 }
 
 my %DELETE = (
-    location => sub { croak $CGI::Header::MODIFY },
+    content_type => sub {
+        my ( $self, $prop ) = @_;
+        my $value = defined wantarray && $self->get( $prop );
+        delete $self->{header}->{-type};
+        $value;
+    },
+    location => sub { croak "Can't delete the Location header" },
     status => sub {
         my ( $self, $prop ) = @_;
         my $value = defined wantarray && $self->get( $prop );
@@ -47,14 +87,9 @@ my %DELETE = (
 
 sub delete {
     my $self = shift;
-    my $prop = $self->_normalize( shift );
-    my $delete = $DELETE{$prop} || 'SUPER::delete';
-    $self->$delete( "-$prop" );
-}
-
-sub _self_url {
-    my $self = shift;
-    $self->{_self_url} ||= $self->query->self_url;
+    my $key = $self->lc( shift );
+    my $delete = $DELETE{$key} || 'SUPER::delete';
+    $self->$delete( "-$key" );
 }
 
 sub SCALAR {
@@ -67,6 +102,20 @@ sub clear {
     %{ $self->{header} } = ( -type => q{}, -status => q{} );
     $self->query->cache( 0 );
     $self;
+}
+
+sub flatten {
+    my $self = shift;
+    my $header = $self->{header};
+    local $header->{-location} = $self->_self_url if !$header->{-location};
+    local $header->{-status} = '302 Found' if !defined $header->{-status};
+    local $header->{-type} = q{} if !exists $header->{-type};
+    $self->SUPER::flatten( @_ );
+}
+
+sub _self_url {
+    my $self = shift;
+    $self->{_self_url} ||= $self->query->self_url;
 }
 
 sub as_string {
@@ -102,6 +151,13 @@ CGI::Header::Redirect is a subclass of L<CGI::Header>.
 
 =over 4
 
+=item $alias = CGI::Header::Redirect->get_alias( $prop )
+
+C<uri> and C<url> are the alias of C<location>.
+
+  CGI::Header::Redirect->get_alias('uri'); # => 'location'
+  CGI::Header::Redirect->get_alias('url'); # => 'location'
+
 =item $header = CGI::Header::Redirect->new( $url )
 
 A shortcut for:
@@ -111,19 +167,50 @@ A shortcut for:
 =item $self = $header->clear
 
 Unlike L<CGI::Header> objects, you cannot C<clear()> your
-CGI::Header::Redirect object. The Location header always exists.
+CGI::Header::Redirect object completely. The Location header always exists.
 
   $header->clear; # warn "Can't delete the Location header"
 
 =item $bool = $header->is_empty
 
-Always returns true.
+Always returns false.
 
 =item $header->as_string
 
 A shortcut for:
 
   $header->query->redirect( $header->header );
+
+=back
+
+=head1 LIMITATIONS
+
+=over 4
+
+=item Location
+
+You can't delete the Location header. The header field always exists.
+
+  # wrong
+  $header->set( 'Location' => q{} );
+  $header->set( 'Location' => undef );
+  $header->delete('Location');
+
+  if ( $header->exists('Location') ) { # always true
+      ...
+  }
+
+=item Status
+
+You can set the Status header to neither C<undef> nor an empty string:
+
+  # wrong
+  $header->set( 'Status' => undef );
+  $header->set( 'Status' => q{} );
+
+Use C<delete()> instead:
+
+  $header->delete('Status');
 
 =back
 

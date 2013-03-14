@@ -1,5 +1,14 @@
 Revision history for Perl extension CGI::Header.
 
+0.33  Mar 15th, 2013
+
+  - Add tests for CGI::Header::Redirect
+  - Fix POD: "CGI::Header::Redirect#is_empty always returns false"
+  - Update dispatch tables to maintain this module more easily
+  - Add the following class methods:
+      * time2str
+      * normalize
+
 0.32  Mar 9th, 2013
 
   - Add CGI::Header::Redirect, an adapter for the CGI::redirect() function.
