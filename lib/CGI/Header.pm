@@ -7,31 +7,67 @@ use Carp qw/carp croak/;
 use List::Util qw/first/;
 use Scalar::Util qw/blessed/;
 
-our $VERSION = '0.34';
+our $VERSION = '0.35';
 
 our $MODIFY = 'Modification of a read-only value attempted';
 
-my %ALIAS = (
-    content_type => 'type',   window_target => 'target',
-    cookies      => 'cookie', set_cookie    => 'cookie',
+my @PROPERTY_NAMES = qw(
+    -attachment
+    -charset
+    -cookie
+    -expires
+    -nph
+    -p3p
+    -status
+    -target
+    -type
 );
 
+my %IS_RESERVED_NAME = map { $_, 1 }
+    qw( -attachment -charset -cookie -cookies -nph -target -type );
+
+our %ALIASED_TO = (
+    -cookies       => '-cookie',
+    -content_type  => '-type',
+    -set_cookie    => '-cookie',
+    -window_target => '-target',
+);
+
+sub get_property_names {
+    @PROPERTY_NAMES;
+}
+
 sub get_alias {
-    $ALIAS{ $_[1] };
+    $ALIASED_TO{ $_[1] };
+}
+
+sub is_reserved_name {
+    $IS_RESERVED_NAME{ $_[1] };
+}
+
+sub normalize_property_name {
+    my $class = shift;
+    my $prop = lc shift;
+    $prop =~ s/^-//;
+    $prop =~ tr/-/_/;
+    $prop = "-$prop";
+    $class->get_alias($prop) || $prop;
+}
+
+sub normalize_field_name {
+    my $class = shift;
+    ( my $field = lc shift ) =~ tr/-/_/;
+    return $field if !$class->is_reserved_name("-$field");
+    croak "'-$field' can't be used as a field name";
 }
 
 sub lc {
+    carp "The lc() method is obsolete and will be removed in 0.36";
     my $class = shift;
-    my $str = lc shift;
+    my $str = CORE::lc shift;
     $str =~ s/^-//;
     $str =~ tr/-/_/;
     $str;
-}
-
-sub normalize {
-    my $class = shift;
-    my $prop = $class->lc( shift );
-    $class->get_alias($prop) || $prop;
 }
 
 sub time2str {
@@ -49,8 +85,8 @@ sub new {
     elsif ( @args % 2 == 0 ) {
         my $header = $self->{header} = {};
         while ( my ($key, $value) = splice @args, 0, 2 ) {
-            my $prop = $self->normalize( $key );
-            $header->{ "-$prop" } = $value; # force overwrite
+            my $prop = $self->normalize_property_name( $key );
+            $header->{ $prop } = $value; # force overwrite
         }
         if ( blessed $header->{-query} ) {
             $self->{query} = delete $header->{-query};
@@ -85,7 +121,7 @@ sub rehash {
     my $header = $self->{header};
 
     for my $key ( keys %{$header} ) {
-        my $prop = '-' . $self->normalize( $key );
+        my $prop = $self->normalize_property_name( $key );
         next if $key eq $prop; # $key is normalized
         croak "Property '$prop' already exists" if exists $header->{ $prop };
         $header->{ $prop } = delete $header->{ $key }; # rename $key to $prop
@@ -147,9 +183,9 @@ my %GET = (
 
 sub get {
     my $self = shift;
-    my $key = $self->lc( shift );
-    my $get = $GET{$key} || $GET{DEFAULT};
-    $self->$get( "-$key" );
+    my $field = $self->normalize_field_name( shift );
+    my $get = $GET{$field} || $GET{DEFAULT};
+    $self->$get( "-$field" );
 }
 
 my %SET = (
@@ -206,9 +242,9 @@ my %SET = (
 
 sub set { # unstable
     my $self = shift;
-    my $key = $self->lc( shift );
-    my $set = $SET{$key} || $SET{DEFAULT};
-    $self->$set( "-$key", @_ );
+    my $field = $self->normalize_field_name( shift );
+    my $set = $SET{$field} || $SET{DEFAULT};
+    $self->$set( "-$field", @_ );
 }
 
 my %EXISTS = (
@@ -249,9 +285,9 @@ my %EXISTS = (
 
 sub exists {
     my $self = shift;
-    my $key = $self->lc( shift );
-    my $exists = $EXISTS{$key} || $EXISTS{DEFAULT};
-    $self->$exists( "-$key" );
+    my $field = $self->normalize_field_name( shift );
+    my $exists = $EXISTS{$field} || $EXISTS{DEFAULT};
+    $self->$exists( "-$field" );
 }
 
 my %DELETE = (
@@ -292,17 +328,16 @@ my %DELETE = (
 );
 
 sub delete {
-    my $self   = shift;
-    my $key    = $self->lc( shift );
-    my $header = $self->{header};
+    my $self  = shift;
+    my $field = $self->normalize_field_name( shift );
 
-    if ( my $delete = $DELETE{$key} ) {
-        my $value = defined wantarray && $self->get( $key );
-        $self->$delete( "-$key" );
+    if ( my $delete = $DELETE{$field} ) {
+        my $value = defined wantarray && $self->get( $field );
+        $self->$delete( "-$field" );
         return $value;
     }
 
-    delete $header->{ "-$key" };
+    delete $self->{header}->{"-$field"};
 }
 
 sub _delete {
@@ -360,12 +395,12 @@ sub nph {
 
     if ( @_ ) {
         my $nph = shift;
-        croak $MODIFY if !$nph and $NPH;
+        croak "The '-nph' pragma is enabled" if !$nph and $NPH;
         delete @{ $header }{qw/-date -server/} if $nph;
         return $header->{-nph} = $nph;
     }
 
-    $header->{-nph} or $NPH;
+    $NPH or $header->{-nph};
 }
 
 sub p3p_tags {
@@ -380,11 +415,6 @@ sub p3p_tags {
     }
 
     return;
-}
-
-sub cache {
-    my $self = shift;
-    $self->query->cache(@_);
 }
 
 sub flatten {
@@ -464,10 +494,13 @@ BEGIN { # TODO: These methods can't be overridden
 
 sub SCALAR {
     my $self = shift;
-    my $header = $self->{header};
-    !defined $header->{-type}
-        or first { $_ } values %{ $header }
-        or $self->query->cache;
+    my $query = $self->query;
+    my %header = %{ $self->{header} };
+    !defined $header{-type} # the Content-Type header exists
+        or first { delete $header{$_} } @PROPERTY_NAMES # has header props.
+        or %header       # %header minus header props. isn't empty
+        or $query->cache # the Pragma header exists
+        or $query->nph;  # use CGI qw(-nph);
 }
 
 sub FIRSTKEY {
@@ -529,7 +562,7 @@ CGI::Header - Adapter for CGI::header() function
 
 =head1 VERSION
 
-This document refers to CGI::Header version 0.34.
+This document refers to CGI::Header version 0.35.
 
 =head1 DEPENDENCIES
 
@@ -657,14 +690,9 @@ A shortcut for:
 
   my $header = CGI::Header->new({ -type => $media_type });
 
-=item $alias = CGI::Header->get_alias( $prop )
-
-Returns the alias of the given property name.
-If the alias doesn't exist, then C<undef> is returned.
-
-  my $alias = CGI::Header->get_alias('content_type'); # => 'type'
-
 =item CGI::Header->lc( $str )
+
+This method is obsolete and will be removed in 0.36.
 
 Returns the lowercased version of C<$str>.
 Unlike C<CORE::lc>, this method gets rid of an initial dash,

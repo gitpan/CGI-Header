@@ -4,14 +4,21 @@ use warnings;
 use base 'CGI::Header';
 use Carp qw/carp croak/;
 
-my %ALIAS = (
-    content_type => 'type',     window_target => 'target',
-    cookies      => 'cookie',   set_cookie    => 'cookie',
-    uri          => 'location', url           => 'location',
+my %IS_RESERVED_NAME = map { $_, 1 }
+    qw( -attachment -charset -cookie -cookies -nph -target -type -uri -url );
+
+our %ALIASED_TO = (
+    %CGI::Header::ALIASED_TO,
+    -uri => '-location',
+    -url => '-location',
 );
 
 sub get_alias {
-    $ALIAS{ $_[1] };
+    $ALIASED_TO{ $_[1] };
+}
+
+sub is_reserved_name {
+    $IS_RESERVED_NAME{ $_[1] };
 }
 
 sub new {
@@ -25,7 +32,7 @@ my %GET = (
         my $self = shift; 
         my $header = $self->{header};
         local $header->{-type} = q{} if !exists $header->{-type};
-        $self->SUPER::get( @_ );
+        $self->SUPER::get('Content-Type');
     },
     location => sub {
         my ( $self, $prop ) = @_; 
@@ -40,9 +47,9 @@ my %GET = (
 
 sub get {
     my $self = shift;
-    my $prop = $self->lc( shift );
-    my $get = $GET{$prop} || 'SUPER::get';
-    $self->$get( "-$prop" );
+    my $field = $self->normalize_field_name( shift );
+    my $get = $GET{$field} || 'SUPER::get';
+    $self->$get( "-$field" );
 }
 
 my %EXISTS = (
@@ -64,32 +71,34 @@ my %EXISTS = (
 
 sub exists {
     my $self = shift;
-    my $key = $self->lc( shift );
-    my $exists = $EXISTS{$key} || 'SUPER::exists';
-    $self->$exists( "-$key" );
+    my $field = $self->normalize_field_name( shift );
+    my $exists = $EXISTS{$field} || 'SUPER::exists';
+    $self->$exists( "-$field" );
 }
 
 my %DELETE = (
     content_type => sub {
         my ( $self, $prop ) = @_;
-        my $value = defined wantarray && $self->get( $prop );
         delete $self->{header}->{-type};
-        $value;
     },
     location => sub { croak "Can't delete the Location header" },
     status => sub {
         my ( $self, $prop ) = @_;
-        my $value = defined wantarray && $self->get( $prop );
         $self->{header}->{$prop} = q{};
-        $value;
     },
 );
 
 sub delete {
-    my $self = shift;
-    my $key = $self->lc( shift );
-    my $delete = $DELETE{$key} || 'SUPER::delete';
-    $self->$delete( "-$key" );
+    my $self  = shift;
+    my $field = $self->normalize_field_name( shift );
+
+    if ( my $delete = $DELETE{$field} ) {
+        my $value = defined wantarray && $self->get( $field );
+        $self->$delete( "-$field" );
+        return $value;
+    }
+
+    $self->SUPER::delete( $field );
 }
 
 sub SCALAR {
