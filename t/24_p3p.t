@@ -15,7 +15,7 @@ subtest 'default' => sub {
 subtest 'an empty string' => sub {
     my $header = tie my %header, 'CGI::Header', ( -p3p => q{} );
     is $header{P3P}, undef;
-    ok exists $header{P3P};
+    ok !exists $header{P3P};
     is delete $header{P3P}, undef;
     is_deeply $header->header, {};
 };
@@ -46,5 +46,5 @@ subtest 'a plain string' => sub {
 subtest 'exceptions' => sub {
     my $header = tie my %header, 'CGI::Header';
     warning_is { $header{P3P} = '/path/to/p3p.xml' }
-        "Can't assign to '-p3p' directly, use p3p_tags() instead";
+        "Can't assign to '-p3p' directly, use p3p() instead";
 };
