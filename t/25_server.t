@@ -12,23 +12,23 @@ is $header{Server}, undef;
 ok !exists $header{Server};
 my $value = 'Apache/1.3.27 (Unix)';
 is $header->set( Server => $value ), $value;
-is_deeply $header->header, { -server => 'Apache/1.3.27 (Unix)' };
+is_deeply $header->header, { server => 'Apache/1.3.27 (Unix)' };
 
-%{ $header->header } = ( -server => 'Apache/1.3.27 (Unix)' );
+%{ $header->header } = ( server => 'Apache/1.3.27 (Unix)' );
 is $header{Server}, 'Apache/1.3.27 (Unix)';
 ok exists $header{Server};
 $header->nph( 1 );
-is_deeply $header->header, { -nph => 1 }, '-server should be deleted';
+is_deeply $header->header, { nph => 1 }, '-server should be deleted';
 
-%{ $header->header } = ( -nph => 1 );
+%{ $header->header } = ( nph => 1 );
 
 local %ENV;
-is $header{Server}, 'cmdline';
-ok exists $header{Server};
+is $header->as_hashref->{Server}, 'cmdline';
+ok exists $header->as_hashref->{Server};
 
 $ENV{SERVER_SOFTWARE} = 'Apache/1.3.27 (Unix)';
-is $header{Server}, 'Apache/1.3.27 (Unix)';
-ok exists $header{Server};
+is $header->as_hashref->{Server}, 'Apache/1.3.27 (Unix)';
+ok exists $header->as_hashref->{Server};
 
 my $expected = qr{^Modification of a read-only value attempted};
 throws_ok { $header{Server} = 'Apache/1.3.27 (Unix)' } $expected;

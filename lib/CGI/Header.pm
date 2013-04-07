@@ -6,58 +6,35 @@ use Carp qw/carp croak/;
 use List::Util qw/first/;
 use Scalar::Util qw/blessed/;
 
-our $VERSION = '0.40';
+our $VERSION = '0.41';
 
 our $MODIFY = 'Modification of a read-only value attempted';
 
-my @PROPERTY_NAMES = qw(
-    -attachment
-    -charset
-    -cookie
-    -expires
-    -nph
-    -p3p
-    -status
-    -target
-    -type
-);
-
-my %IS_RESERVED_NAME = map { $_, 1 }
-    qw( -attachment -charset -cookie -cookies -nph -target -type );
-
 our %ALIASED_TO = (
-    -cookies       => '-cookie',
-    -content_type  => '-type',
-    -set_cookie    => '-cookie',
-    -window_target => '-target',
+    'cookies'       => 'cookie',
+    'content-type'  => 'type',
+    'set-cookie'    => 'cookie',
+    'window-target' => 'target',
 );
-
-sub get_property_names {
-    @PROPERTY_NAMES;
-}
 
 sub get_alias {
     $ALIASED_TO{ $_[1] };
-}
-
-sub is_reserved_name {
-    $IS_RESERVED_NAME{ $_[1] };
 }
 
 sub normalize_property_name {
     my $class = shift;
     my $prop = lc shift;
     $prop =~ s/^-//;
-    $prop =~ tr/-/_/;
-    $prop = "-$prop";
+    $prop =~ tr/_/-/;
     $class->get_alias($prop) || $prop;
 }
 
 sub normalize_field_name {
     my $class = shift;
-    ( my $field = lc shift ) =~ tr/-/_/;
-    return $field if !$class->is_reserved_name("-$field");
-    croak "'-$field' can't be used as a field name";
+    my $field = lc shift;
+    $field =~ s/^-//;
+    $field =~ tr/_/-/;
+    $field;
 }
 
 sub time2str {
@@ -120,66 +97,10 @@ sub rehash {
     $self;
 }
 
-my %GET = (
-    DEFAULT => sub {
-        my ( $self, $prop ) = @_;
-        $self->{header}->{$prop};
-    },
-    content_disposition => sub {
-        my ( $self, $prop ) = @_;
-        my $name = $self->attachment;
-        $name ? qq{attachment; filename="$name"} : $self->{header}->{$prop};
-    },
-    content_type => sub {
-        my $self = shift;
-        my ( $type, $charset ) = @{ $self->{header} }{qw/-type -charset/};
-        return if defined $type and $type eq q{};
-        $charset = $self->query->charset unless defined $charset;
-        $type ||= 'text/html';
-        $type .= "; charset=$charset" if $charset && $type !~ /\bcharset\b/;
-        $type;
-    },
-    date => sub {
-        my ( $self, $prop ) = @_;
-        $self->_has_date ? $self->time2str : $self->{header}->{$prop};
-    },
-    expires => sub {
-        my ( $self, $prop ) = @_;
-        my $expires = $self->{header}->{$prop};
-        $expires ? $self->time2str($expires) : undef;
-    },
-    p3p => sub {
-        my $self = shift;
-        my $tags = join ' ', $self->p3p;
-        $tags ? qq{policyref="/w3c/p3p.xml", CP="$tags"} : undef;
-    },
-    pragma => sub {
-        my ( $self, $prop ) = @_;
-        $self->query->cache ? 'no-cache' : $self->{header}->{$prop};
-    },
-    server => sub {
-        my ( $self, $prop ) = @_;
-        $self->nph ? $self->query->server_software : $self->{header}->{$prop};
-    },
-    set_cookie => sub {
-        my $self = shift;
-        $self->{header}->{-cookie} || undef;
-    },
-    status => sub {
-        my ( $self, $prop ) = @_;
-        $self->{header}->{$prop} || undef;
-    },
-    window_target => sub {
-        my $self = shift;
-        $self->{header}->{-target} || undef;
-    },
-);
-
 sub get {
     my $self = shift;
-    my $field = $self->normalize_field_name( shift );
-    my $get = $GET{$field} || $GET{DEFAULT};
-    $self->$get( "-$field" );
+    my $field = lc shift;
+    $self->{header}->{$field};
 }
 
 my %SET = (
@@ -187,15 +108,15 @@ my %SET = (
         my ( $self, $prop, $value ) = @_;
         $self->{header}->{$prop} = $value;
     },
-    content_disposition => sub {
+    'content-disposition' => sub {
         my ( $self, $prop, $value ) = @_;
-        delete $self->{header}->{-attachment};
+        delete $self->{header}->{attachment};
         $self->{header}->{$prop} = $value;
     },
-    content_type => sub {
+    'content-type' => sub {
         my ( $self, $prop, $value ) = @_;
         if ( defined $value and $value ne q{} ) {
-            @{ $self->{header} }{qw/-charset -type/} = ( q{}, $value );
+            @{ $self->{header} }{qw/charset type/} = ( q{}, $value );
             return $value;
         }
         else {
@@ -223,14 +144,14 @@ my %SET = (
         croak $MODIFY if $self->nph;
         $self->{header}->{$prop} = $value;
     },
-    set_cookie => sub {
+    'set-cookie' => sub {
         my ( $self, $prop, $value ) = @_;
-        delete $self->{header}->{-date} if $value;
-        $self->{header}->{-cookie} = $value;
+        delete $self->{header}->{date} if $value;
+        $self->{header}->{cookie} = $value;
     },
-    window_target => sub {
+    'window-target' => sub {
         my ( $self, $prop, $value ) = @_;
-        $self->{header}->{-target} = $value;
+        $self->{header}->{target} = $value;
     },
 );
 
@@ -238,73 +159,24 @@ sub set { # unstable
     my $self = shift;
     my $field = $self->normalize_field_name( shift );
     my $set = $SET{$field} || $SET{DEFAULT};
-    $self->$set( "-$field", @_ );
+    $self->$set( $field, @_ );
 }
-
-my %EXISTS = (
-    DEFAULT => sub {
-        my ( $self, $prop ) = @_;
-        exists $self->{header}->{$prop};
-    },
-    content_disposition => sub {
-        my ( $self, $prop ) = @_;
-        exists $self->{header}->{$prop} or $self->attachment;
-    },
-    content_type => sub {
-        my $self = shift;
-        my $type = $self->{header}->{-type};
-        !defined $type or $type ne q{};
-    },
-    date => sub {
-        my ( $self, $prop ) = @_;
-        $self->_has_date or exists $self->{header}->{$prop};
-    },
-    expires => sub {
-        my ( $self, $prop ) = @_;
-        $self->{header}->{$prop};
-    },
-    p3p => sub {
-        my ( $self, $prop ) = @_;
-        $self->{header}->{$prop};
-    },
-    pragma => sub {
-        my ( $self, $prop ) = @_;
-        $self->query->cache or exists $self->{header}->{$prop};
-    },
-    server => sub {
-        my ( $self, $prop ) = @_;
-        $self->nph or exists $self->{header}->{$prop};
-    },
-    set_cookie => sub {
-        my $self = shift;
-        $self->{header}->{-cookie};
-    },
-    status => sub {
-        my ( $self, $prop ) = @_;
-        $self->{header}->{$prop};
-    },
-    window_target => sub {
-        my $self = shift;
-        $self->{header}->{-target};
-    },
-);
 
 sub exists {
     my $self = shift;
-    my $field = $self->normalize_field_name( shift );
-    my $exists = $EXISTS{$field} || $EXISTS{DEFAULT};
-    $self->$exists( "-$field" );
+    my $field = lc shift;
+    exists $self->{header}->{$field};
 }
 
 my %DELETE = (
-    content_disposition => sub {
+    'content-disposition' => sub {
         my ( $self, $prop ) = @_;
-        delete @{ $self->{header} }{ $prop, '-attachment' };
+        delete @{ $self->{header} }{ $prop, 'attachment' };
     },
-    content_type => sub {
+    'content-type' => sub {
         my ( $self, $prop ) = @_;
-        delete $self->{header}->{-charset};
-        $self->{header}->{-type} = q{};
+        delete $self->{header}->{charset};
+        $self->{header}->{type} = q{};
     },
     date => sub {
         my ( $self, $prop ) = @_;
@@ -323,14 +195,14 @@ my %DELETE = (
         croak $MODIFY if $self->nph;
         delete $self->{header}->{$prop};
     },
-    set_cookie => sub {
+    'set-cookie' => sub {
         my ( $self, $prop ) = @_;
-        delete $self->{header}->{-cookie};
+        delete $self->{header}->{cookie};
     },
     status => '_delete',
-    window_target => sub {
+    'window-target' => sub {
         my ( $self, $prop ) = @_;
-        delete $self->{header}->{-target};
+        delete $self->{header}->{target};
     },
 );
 
@@ -340,11 +212,11 @@ sub delete {
 
     if ( my $delete = $DELETE{$field} ) {
         my $value = defined wantarray && $self->get( $field );
-        $self->$delete( "-$field" );
+        $self->$delete( $field );
         return $value;
     }
 
-    delete $self->{header}->{"-$field"};
+    delete $self->{header}->{$field};
 }
 
 sub _delete {
@@ -352,14 +224,9 @@ sub _delete {
     delete $self->{header}->{$prop};
 }
 
-sub is_empty {
-    carp "'is_empty' is obsolete and will be removed in 0.41";
-    !$_[0]->SCALAR;
-}
-
 sub clear {
     my $self = shift;
-    %{ $self->{header} } = ( -type => q{} );
+    %{ $self->{header} } = ( type => q{} );
     $self->query->cache( 0 );
     $self;
 }
@@ -385,22 +252,22 @@ sub _push {
 
 sub push_p3p {
     my $self = shift;
-    $self->_push( '-p3p', @_ );
+    $self->_push( 'p3p', @_ );
 }
 
 sub push_cookie {
     my $self = shift;
-    $self->_push( '-cookie', @_ );
+    $self->_push( 'cookie', @_ );
 }
 
 BEGIN {
     my @conflicts = (
-        attachment => [ '-content_disposition' ],
-        expires    => [ '-date' ],
+        attachment => [ 'content-disposition' ],
+        expires    => [ 'date' ],
     );
 
     while ( my ($method, $conflicts) = splice @conflicts, 0, 2 ) {
-        my $prop = "-$method";
+        my $prop = "$method";
         my $code = sub {
             my $self   = shift;
             my $header = $self->{header};
@@ -449,18 +316,18 @@ sub nph {
     if ( @_ ) {
         my $nph = shift;
         croak "The '-nph' pragma is enabled" if !$nph and $NPH;
-        delete @{ $header }{qw/-date -server/} if $nph;
-        return $header->{-nph} = $nph;
+        delete @{ $header }{qw/date server/} if $nph;
+        return $header->{nph} = $nph;
     }
 
-    $NPH or $header->{-nph};
+    $NPH or $header->{nph};
 }
 
 sub cookie {
     my $self = shift;
 
     if ( @_ ) {
-        $self->{header}->{-cookie} = @_ > 1 ? [ @_ ] : shift;
+        $self->{header}->{cookie} = @_ > 1 ? [ @_ ] : shift;
     }
     elsif ( my $cookie = $self->{header}->{cookie} ) {
         return ref $cookie eq 'ARRAY' ? @{$cookie} : $cookie;
@@ -477,9 +344,9 @@ sub p3p {
     my $header = $self->{header};
 
     if ( @_ ) {
-        $header->{-p3p} = @_ > 1 ? [ @_ ] : shift;
+        $header->{p3p} = @_ > 1 ? [ @_ ] : shift;
     }
-    elsif ( my $p3p = $header->{-p3p} ) {
+    elsif ( my $p3p = $header->{p3p} ) {
         my @tags = ref $p3p eq 'ARRAY' ? @{$p3p} : $p3p;
         return map { split ' ', $_ } @tags;
     }
@@ -490,12 +357,6 @@ sub p3p {
     $self;
 }
 
-sub p3p_tags {
-    carp "p3p_tags() is obsolete and will be removed in 0.41";
-    my $self = shift;
-    $self->p3p( @_ );
-}
-
 sub as_hashref {
     +{ $_[0]->flatten };
 }
@@ -504,18 +365,18 @@ sub flatten {
     my $self  = shift;
     my $query = $self->query;
     my %copy  = %{ $self->{header} };
-    my $nph   = delete $copy{-nph} || $query->nph;
+    my $nph   = delete $copy{nph} || $query->nph;
 
     my @headers;
 
     my ( $charset, $cookie, $expires, $status, $target, $type )
-        = delete @copy{qw/-charset -cookie -expires -status -target -type/};
+        = delete @copy{qw/charset cookie expires status target type/};
 
     push @headers, 'Server', $query->server_software if $nph;
     push @headers, 'Status', $status        if $status;
     push @headers, 'Window-Target', $target if $target;
 
-    if ( my $tags = delete $copy{-p3p} ) {
+    if ( my $tags = delete $copy{p3p} ) {
         $tags = join ' ', @{ $tags } if ref $tags eq 'ARRAY';
         push @headers, 'P3P', qq{policyref="/w3c/p3p.xml", CP="$tags"};
     }
@@ -529,11 +390,11 @@ sub flatten {
     push @headers, 'Date', $self->time2str if $expires or $cookie or $nph;
     push @headers, 'Pragma', 'no-cache' if $query->cache;
 
-    if ( my $fn = delete $copy{-attachment} ) {
+    if ( my $fn = delete $copy{attachment} ) {
         push @headers, 'Content-Disposition', qq{attachment; filename="$fn"};
     }
 
-    push @headers, map { _ucfirst($_), $copy{$_} } keys %copy;
+    push @headers, map { ucfirst($_), $copy{$_} } keys %copy;
 
     if ( !defined $type or $type ne q{} ) {
         $charset = $query->charset unless defined $charset;
@@ -543,29 +404,6 @@ sub flatten {
     }
 
     @headers;
-}
-
-sub each {
-    my ( $self, $callback ) = @_;
-
-    carp "'each' is obsolete and will be removed in 0.41";
-
-    if ( ref $callback eq 'CODE' ) {
-        my @headers = $self->flatten;
-        while ( my ($field, $value) = splice @headers, 0, 2 ) {
-            $callback->( $field, $value );
-        }
-    }
-    else {
-        croak 'Must provide a code reference to each()';
-    }
-
-    $self;
-}
-
-sub field_names {
-    carp "'field_names' is obsolete and will be removed in 0.41";
-    keys %{{ $_[0]->flatten }};
 }
 
 sub as_string {
@@ -578,17 +416,6 @@ BEGIN { # TODO: These methods can't be overridden
     *EXISTS  = \&exists; *DELETE = \&delete; *CLEAR = \&clear;    
 }
 
-sub SCALAR {
-    my $self = shift;
-    my $query = $self->query;
-    my %header = %{ $self->{header} };
-    !defined $header{-type} # the Content-Type header exists
-        or first { delete $header{$_} } @PROPERTY_NAMES # has header props.
-        or %header       # %header minus header props. isn't empty
-        or $query->cache # the Pragma header exists
-        or $query->nph;  # use CGI qw(-nph);
-}
-
 sub FIRSTKEY {
     my $self = shift;
     my @fields = keys %{ $self->as_hashref };
@@ -599,14 +426,7 @@ sub NEXTKEY { $_[0]->{iterator}->() }
 
 sub _has_date {
     my $self = shift;
-    $self->{header}->{-cookie} or $self->expires or $self->nph;
-}
-
-sub _ucfirst {
-    my $str = shift;
-    $str =~ s/^-(\w)/\u$1/;
-    $str =~ tr/_/-/;
-    $str;
+    $self->{header}->{cookie} or $self->expires or $self->nph;
 }
 
 1;
@@ -626,14 +446,14 @@ CGI::Header - Adapter for CGI::header() function
 
   # CGI.pm-compatible HTTP header properties
   my $header = {
-      -attachment => 'foo.gif',
-      -charset    => 'utf-7',
-      -cookie     => [ $cookie1, $cookie2 ], # CGI::Cookie objects
-      -expires    => '+3d',
-      -nph        => 1,
-      -p3p        => [qw/CAO DSP LAW CURa/],
-      -target     => 'ResultsWindow',
-      -type       => 'image/gif'
+      attachment => 'foo.gif',
+      charset    => 'utf-7',
+      cookie     => [ $cookie1, $cookie2 ], # CGI::Cookie objects
+      expires    => '+3d',
+      nph        => 1,
+      p3p        => [qw/CAO DSP LAW CURa/],
+      target     => 'ResultsWindow',
+      type       => 'image/gif'
   };
 
   # create a CGI::Header object
@@ -675,7 +495,7 @@ For example, L<CGI::Application> implements C<header_add()> method
 which can be used to add CGI.pm-compatible HTTP header properties.
 Instances of CGI applications often hold those properties.
 
-  my $header = { -type => 'text/plain' };
+  my $header = { type => 'text/plain' };
 
 =item 2. Manipulates $header using CGI::Header
 
@@ -691,8 +511,8 @@ CGI::Header normalizes them automatically.
 
   $header;
   # => {
-  #     -type => 'text/plain',
-  #     -content_length => '3002',
+  #     'type' => 'text/plain',
+  #     'content-length' => '3002',
   # }
 
 =item 3. Passes $header to CGI::header() to stringify the variable
@@ -714,12 +534,12 @@ array references. See L<CGI::Header::PSGI>.
 
 =over 4
 
-=item $header = CGI::Header->new( { -type => 'text/plain', ... }[, $query] )
+=item $header = CGI::Header->new( { type => 'text/plain', ... }[, $query] )
 
 Given a header hash reference, returns a CGI::Header object
 which holds a reference to the original given argument:
 
-  my $header = { -type => 'text/plain' };
+  my $header = { type => 'text/plain' };
   my $h = CGI::Header->new( $header );
   $h->header; # same reference as $header
 
@@ -741,11 +561,11 @@ NOTE: In this case, C<new()> doesn't check whether property names of C<$header>
 are normalized or not at all, and so you have to C<rehash()> the header hash
 reference explicitly when you aren't sure that they are normalized.
 
-=item $header = CGI::Header->new( -type => 'text/plain', ... )
+=item $header = CGI::Header->new( type => 'text/plain', ... )
 
 It's roughly equivalent to:
 
-  my $h = CGI::Header->new({ -type => 'text/plain', ... })->rehash;
+  my $h = CGI::Header->new({ type => 'text/plain', ... })->rehash;
 
 Unlike C<rehash()>, if a property name is duplicated,
 that property will be overwritten silently:
@@ -755,7 +575,7 @@ that property will be overwritten silently:
       Content_Type => 'text/html'
   );
 
-  $h->header->{-type}; # => "text/html"
+  $h->header->{type}; # => "text/html"
 
 In addition to CGI.pm-compatible HTTP header properties,
 you can specify '-query' property which represents your query object:
@@ -763,28 +583,18 @@ you can specify '-query' property which represents your query object:
   my $query = CGI->new;
 
   my $h = CGI::Header->new(
-      -type  => 'text/plain',
-      -query => $query,
+      type  => 'text/plain',
+      query => $query,
   );
 
-  $h->header; # => { -type => 'text/plain' }
+  $h->header; # => { type => 'text/plain' }
   $h->query;  # => $query
 
 =item $header = CGI::Header->new( $media_type )
 
 A shortcut for:
 
-  my $header = CGI::Header->new({ -type => $media_type });
-
-=item CGI::Header->lc( $str )
-
-This method is obsolete and will be removed in 0.36.
-
-Returns the lowercased version of C<$str>.
-Unlike C<CORE::lc>, this method gets rid of an initial dash,
-and also transliterates dashes into underscores in C<$str>.
-
-  my $str = CGI::Header->lc( "Foo-Bar" ); # => "foo_bar"
+  my $header = CGI::Header->new({ type => $media_type });
 
 =back
 
@@ -825,14 +635,14 @@ as you expect.
 
   my $h2 = $header->header; # same reference as $h1
   # => {
-  #     '-type'           => 'text/plain',
-  #     '-cookie'         => 'ID=123456; path=/',
-  #     '-expires'        => '+3d',
-  #     '-target'         => 'ResultsWindow',
-  #     '-content_length' => '3002'
+  #     'type'           => 'text/plain',
+  #     'cookie'         => 'ID=123456; path=/',
+  #     'expires'        => '+3d',
+  #     'target'         => 'ResultsWindow',
+  #     'content-length' => '3002'
   # }
 
-Normalized parameter names are:
+Normalized property names are:
 
 =over 4
 
@@ -840,23 +650,19 @@ Normalized parameter names are:
 
   'Content-Length' -> 'content-length'
 
-=item 2. start with a dash
+=item 2. use dashes instead of underscores in property name
 
-  'content-length' -> '-content-length'
-
-=item 3. use underscores instead of dashes except for the first character
-
-  '-content-length' -> '-content_length'
+  'content_length' -> 'content-length'
 
 =back
 
 C<CGI::header()> also accepts aliases of parameter names.
 This module converts them as follows:
 
- '-content_type'  -> '-type'
- '-set_cookie'    -> '-cookie'
- '-cookies'       -> '-cookie'
- '-window_target' -> '-target'
+ 'content-type'  -> 'type'
+ 'set-cookie'    -> 'cookie'
+ 'cookies'       -> 'cookie'
+ 'window-target' -> 'target'
 
 If a property name is duplicated, throws an exception:
 
@@ -874,7 +680,6 @@ If a property name is duplicated, throws an exception:
 
 Get or set the value of the header field.
 The header field name (C<$field>) is not case sensitive.
-You can use underscores as a replacement for dashes in header names.
 
   # field names are case-insensitive
   $header->get( 'Content-Length' );
@@ -908,18 +713,6 @@ Returns the value of the deleted field.
 =item $self = $header->clear
 
 This will remove all header fields.
-
-=item $bool = $header->is_empty
-
-This method is obsolete and will be removed in 0.41.
-
-Returns true if the header contains no key-value pairs.
-
-  $header->clear;
-
-  if ( $header->is_empty ) { # true
-      ...
-  }
 
 =item $clone = $header->clone
 
@@ -989,44 +782,12 @@ with a NPH (no-parse-header) script.
 
   $header->nph( 1 );
 
-=item @fields = $header->field_names
-
-This method is obsolete and will be removed in 0.41.
-
-Returns the list of distinct field names present in the header
-in a random order.
-The field names have case as returned by C<CGI::header()>.
-
-  my @fields = $header->field_names;
-  # => ( 'Set-Cookie', 'Content-length', 'Content-Type' )
-
-=item $self = $header->each( \&callback )
-
-This method is obsolete and will be removed in 0.41.
-
-Apply a subroutine to each header field in turn.
-The callback routine is called with two parameters;
-the name of the field and a value.
-If the Set-Cookie header is multi-valued, then the routine is called
-once for each value.
-Any return values of the callback routine are ignored.
-
-  my @lines;
-  $header->each(sub {
-      my ( $field, $value ) = @_;
-      push @lines, "$field: $value";
-  });
-
-  print join @lines, "\n";
-  # Content-length: 3002
-  # Content-Type: text/plain
-
 =item @headers = $header->flatten
 
 Returns pairs of fields and values. 
 
   # $cookie1 and $cookie2 are CGI::Cookie objects
-  my $header = CGI::Header->new( -cookie => [$cookie1, $cookie2] );
+  my $header = CGI::Header->new( cookie => [$cookie1, $cookie2] );
 
   $header->flatten;
   # => (
@@ -1049,7 +810,7 @@ A shortcut for:
 
   use CGI::Header;
 
-  my $header = { -type => 'text/plain' };
+  my $header = { type => 'text/plain' };
   tie my %header => 'CGI::Header' => $header;
 
   # update $header
@@ -1067,7 +828,6 @@ Above methods are aliased as follows:
   DELETE  -> delete
   CLEAR   -> clear
   EXISTS  -> exists
-  SCALAR  -> !is_empty
 
 You can also iterate through the tied hash:
 
@@ -1092,7 +852,7 @@ to CGI response headers sent by blosxom.cgi:
   }
 
   sub last {
-      my $h = CGI::Header->new( $blosxom::header );
+      my $h = CGI::Header->new( $blosxom::header )->rehash;
       $h->set( 'Content-Length' => length $blosxom::output );
   }
 
@@ -1107,7 +867,7 @@ in this case.
   use CGI::Header;
   use HTTP::Headers;
 
-  my @header_props = ( -type => 'text/plain', ... );
+  my @header_props = ( type => 'text/plain', ... );
   my $h = HTTP::Headers->new( CGI::Header->new(@header_props)->flatten );
   $h->header( 'Content-Type' ); # => "text/plain"
 

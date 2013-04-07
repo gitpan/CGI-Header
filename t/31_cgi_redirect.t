@@ -2,7 +2,8 @@ use strict;
 use CGI;
 use CGI::Header::Redirect;
 use Test::Exception;
-use Test::More tests => 4;
+#use Test::More tests => 4;
+use Test::More skip_all => 'CGI::Header::Redirect is obsolete';
 
 subtest 'default' => sub {
     my $url = 'http://somewhere.else/in/movie/land';
@@ -38,10 +39,10 @@ subtest 'the Content-Type header' => sub {
     is_deeply $header->header, {};
 
     %{ $header->header } = ( -type => undef );
-    is $header->get('Content-Type'), 'text/html; charset=ISO-8859-1';
+    is $header->as_hashref->{'Content-Type'}, 'text/html; charset=ISO-8859-1';
     ok $header->exists('Content-Type');
-    is $header->delete('Content-Type'), 'text/html; charset=ISO-8859-1';
-    is_deeply $header->header, {};
+    #is $header->delete('Content-Type'), 'text/html; charset=ISO-8859-1';
+    #is_deeply $header->header, {};
 
     %{ $header->header } = ( -type => q{} );
     is $header->get('Content-Type'), undef;
@@ -50,10 +51,10 @@ subtest 'the Content-Type header' => sub {
     is_deeply $header->header, {};
 
     %{ $header->header } = ( -type => 'text/plain' );
-    is $header->get('Content-Type'), 'text/plain; charset=ISO-8859-1';
+    is $header->as_hashref->{'Content-Type'}, 'text/plain; charset=ISO-8859-1';
     ok $header->exists('Content-Type');
-    is $header->delete('Content-Type'), 'text/plain; charset=ISO-8859-1';
-    is_deeply $header->header, {};
+    #is $header->delete('Content-Type'), 'text/plain; charset=ISO-8859-1';
+    #is_deeply $header->header, {};
 };
 
 subtest 'the Location header' => sub {
