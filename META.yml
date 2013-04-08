@@ -1,5 +1,5 @@
 ---
-abstract: 'Adapter for CGI::header() function'
+abstract: 'Handle CGI.pm-compatible HTTP header properties'
 author:
   - 'Ryo Anazawa (anazawa@cpan.org)'
 build_requires:
@@ -36,4 +36,4 @@ requires:
 resources:
   license: http://dev.perl.org/licenses/
   repository: https://github.com/anazawa/p5-CGI-Header
-version: 0.43
+version: 0.44
