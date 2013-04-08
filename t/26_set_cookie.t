@@ -15,24 +15,24 @@ my $cookie2 = CGI::Cookie->new(
 );
 
 subtest 'default' => sub {
-    my $header = tie my %header, 'CGI::Header';
-    is $header{Set_Cookie}, undef;
-    ok !exists $header{Set_Cookie};
-    is delete $header{Set_Cookie}, undef;
-    is_deeply $header->header, {};
+    my $header = CGI::Header->new;
+    is $header->as_hashref->{'Set-Cookie'}, undef;
+    ok !exists $header->as_hashref->{'Set-Cookie'};
+    #is delete $header{Set_Cookie}, undef;
+    #is_deeply $header->header, {};
 };
 
 subtest 'an empty string' => sub {
-    my $header = tie my %header, 'CGI::Header', ( -cookie => q{} );
-    is $header{Set_Cookie}, undef;
-    ok !exists $header{Set_Cookie};
-    is delete $header{Set_Cookie}, undef;
-    is_deeply $header->header, {};
+    my $header = CGI::Header->new( -cookie => q{} );
+    is $header->as_hashref->{'Set-Cookie'}, undef;
+    ok !exists $header->as_hashref->{'Set-Cookie'};
+    #is delete $header{cookie}, q{};
+    #is_deeply $header->header, {};
 };
 
 subtest 'a CGI::Cookie object' => sub {
-    my $header = tie my %header, 'CGI::Header';
-    $header{Set_Cookie} = $cookie1;
+    my $header = CGI::Header->new;
+    $header->cookie( $cookie1 );
     is $header->header->{cookie}, $cookie1;
     is $header->as_hashref->{'Set-Cookie'}->[0], $cookie1; 
     ok exists $header->as_hashref->{'Set-Cookie'};
@@ -43,9 +43,9 @@ subtest 'a CGI::Cookie object' => sub {
 
 subtest 'CGI::Cookie objects' => sub {
     my @cookies = ( $cookie1, $cookie2 );
-    my $header  = tie my %header, 'CGI::Header';
+    my $header  = CGI::Header->new;
 
-    $header{'Set-Cookie'} = \@cookies;
+    $header->cookie( \@cookies );
     is_deeply $header->header, { cookie => \@cookies };
     #is $header->as_hashref->{'Set-Cookie'}, \@cookies;
     ok exists $header->as_hashref->{'Set-Cookie'};
@@ -64,6 +64,7 @@ subtest 'CGI::Cookie objects' => sub {
 };
 
 subtest '-cookie and -date' => sub {
+    plan skip_all => 'obsolete';
     my $header = tie my %header, 'CGI::Header';
     $header{Date} = 'Sat, 07 Jul 2012 05:05:09 GMT';
     is $header->set( 'Set-Cookie' => $cookie1 ), $cookie1;

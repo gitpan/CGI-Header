@@ -2,13 +2,10 @@ package CGI::Header;
 use 5.008_009;
 use strict;
 use warnings;
-use Carp qw/carp croak/;
-use List::Util qw/first/;
+use Carp qw/croak/;
 use Scalar::Util qw/blessed/;
 
-our $VERSION = '0.42';
-
-our $MODIFY = 'Modification of a read-only value attempted';
+our $VERSION = '0.43';
 
 my %Property_Alias = (
     'cookies'       => 'cookie',
@@ -25,14 +22,6 @@ sub normalize_property_name {
     $prop =~ s/^-//;
     $prop =~ tr/_/-/;
     $Property_Alias{$prop} || $prop;
-}
-
-sub normalize_field_name {
-    my $class = shift;
-    my $field = lc shift;
-    $field =~ s/^-//;
-    $field =~ tr/_/-/;
-    $field;
 }
 
 sub time2str {
@@ -96,7 +85,7 @@ sub rehash {
         my $prop = lc $key;
            $prop =~ s/^-//;
            $prop =~ tr/_/-/;
-           $prop = $Property_Alias{$prop} || $prop;
+           $prop = $Property_Alias{$prop} if exists $Property_Alias{$prop};
 
         next if $key eq $prop; # $key is normalized
 
@@ -114,63 +103,10 @@ sub get {
     $self->{header}->{$field};
 }
 
-my %SET = (
-    DEFAULT => sub {
-        my ( $self, $prop, $value ) = @_;
-        $self->{header}->{$prop} = $value;
-    },
-    'content-disposition' => sub {
-        my ( $self, $prop, $value ) = @_;
-        delete $self->{header}->{attachment};
-        $self->{header}->{$prop} = $value;
-    },
-    'content-type' => sub {
-        my ( $self, $prop, $value ) = @_;
-        if ( defined $value and $value ne q{} ) {
-            @{ $self->{header} }{qw/charset type/} = ( q{}, $value );
-            return $value;
-        }
-        else {
-            carp "Can set '-content_type' to neither undef nor an empty string";
-        }
-    },
-    date => sub {
-        my ( $self, $prop, $value ) = @_;
-        croak $MODIFY if $self->_has_date;
-        $self->{header}->{$prop} = $value;
-    },
-    expires => sub {
-        carp "Can't assign to '-expires' directly, use expires() instead";
-    },
-    p3p => sub {
-        carp "Can't assign to '-p3p' directly, use p3p() instead";
-    },
-    pragma => sub {
-        my ( $self, $prop, $value ) = @_;
-        croak $MODIFY if $self->query->cache;
-        $self->{header}->{$prop} = $value;
-    },
-    server => sub {
-        my ( $self, $prop, $value ) = @_;
-        croak $MODIFY if $self->nph;
-        $self->{header}->{$prop} = $value;
-    },
-    'set-cookie' => sub {
-        my ( $self, $prop, $value ) = @_;
-        delete $self->{header}->{date} if $value;
-        $self->{header}->{cookie} = $value;
-    },
-    'window-target' => sub {
-        my ( $self, $prop, $value ) = @_;
-        $self->{header}->{target} = $value;
-    },
-);
-
-sub set { # unstable
+sub set {
     my $self = shift;
-    my $field = $self->normalize_field_name( shift );
-    my $set = $SET{$field} || $SET{DEFAULT};
-    $self->$set( $field, @_ );
+    my $field = lc shift;
+    $self->{header}->{$field} = shift;
 }
 
 sub exists {
@@ -179,66 +115,15 @@ sub exists {
     exists $self->{header}->{$field};
 }
 
-my %DELETE = (
-    'content-disposition' => sub {
-        my ( $self, $prop ) = @_;
-        delete @{ $self->{header} }{ $prop, 'attachment' };
-    },
-    'content-type' => sub {
-        my ( $self, $prop ) = @_;
-        delete $self->{header}->{charset};
-        $self->{header}->{type} = q{};
-    },
-    date => sub {
-        my ( $self, $prop ) = @_;
-        croak $MODIFY if $self->_has_date;
-        delete $self->{header}->{$prop};
-    },
-    expires => '_delete',
-    p3p => '_delete',
-    pragma => sub {
-        my ( $self, $prop ) = @_;
-        croak $MODIFY if $self->query->cache;
-        delete $self->{header}->{$prop};
-    },
-    server => sub {
-        my ( $self, $prop ) = @_;
-        croak $MODIFY if $self->nph;
-        delete $self->{header}->{$prop};
-    },
-    'set-cookie' => sub {
-        my ( $self, $prop ) = @_;
-        delete $self->{header}->{cookie};
-    },
-    status => '_delete',
-    'window-target' => sub {
-        my ( $self, $prop ) = @_;
-        delete $self->{header}->{target};
-    },
-);
-
 sub delete {
-    my $self  = shift;
-    my $field = $self->normalize_field_name( shift );
-
-    if ( my $delete = $DELETE{$field} ) {
-        my $value = defined wantarray && $self->get( $field );
-        $self->$delete( $field );
-        return $value;
-    }
-
+    my $self = shift;
+    my $field = lc shift;
     delete $self->{header}->{$field};
-}
-
-sub _delete {
-    my ( $self, $prop ) = @_;
-    delete $self->{header}->{$prop};
 }
 
 sub clear {
     my $self = shift;
-    %{ $self->{header} } = ( type => q{} );
-    $self->query->cache( 0 );
+    %{ $self->{header} } = ();
     $self;
 }
 
@@ -291,8 +176,17 @@ sub cookie {
 }
 
 sub push_cookie {
-    my $self = shift;
-    push @{ $self->{header}->{cookie} }, @_;
+    my ( $self, @cookies ) = @_;
+    my $header = $self->{header};
+
+    if ( my $cookie = $header->{cookie} ) {
+        return push @{$cookie}, @cookies if ref $cookie eq 'ARRAY';
+        unshift @cookies, $cookie;
+    }
+
+    $header->{cookie} = @cookies > 1 ? \@cookies : $cookies[0];
+
+    scalar @cookies;
 }
 
 sub p3p {
@@ -402,24 +296,6 @@ sub as_string {
     }
 
     return;
-}
-
-BEGIN { # TODO: These methods can't be overridden
-    *TIEHASH = \&new;    *FETCH  = \&get;    *STORE = \&set;
-    *EXISTS  = \&exists; *DELETE = \&delete; *CLEAR = \&clear;    
-}
-
-sub FIRSTKEY {
-    my $self = shift;
-    my @fields = keys %{ $self->as_hashref };
-    ( $self->{iterator} = sub { shift @fields } )->();
-}
-
-sub NEXTKEY { $_[0]->{iterator}->() }
-
-sub _has_date {
-    my $self = shift;
-    $self->{header}->{cookie} or $self->expires or $self->nph;
 }
 
 1;
@@ -780,8 +656,7 @@ Get or set the C<attachment> property.
 Can be used to turn the page into an attachment.
 Represents suggested name for the saved file.
 
-  $header->attachment( 'genome.jpg' );
-  my $filename = $header->attachment; # => "genome.jpg"
+  $header->attachment('genome.jpg');
 
 In this case, the outgoing header will be formatted as:
 
@@ -947,31 +822,31 @@ You can set the Content-Type header to neither undef nor an empty:
   $header->set( 'Content-Type' => undef );
   $header->set( 'Content-Type' => q{} );
 
-Use delete() instead:
+Set C<type> property to an empty string:
 
-  $header->delete('Content-Type');
+  $header->type(q{});
 
 =item Date
 
 If one of the following conditions is met, the Date header will be set
 automatically, and also the header field will become read-only:
 
-  if ( $header->nph or $header->get('Set-Cookie') or $header->expires ) {
-      my $date = $header->get('Date'); # => HTTP-Date (current time)
+  if ( $header->nph or $header->cookie or $header->expires ) {
+      my $date = $header->as_hashref->{'Date'}; # => HTTP-Date (current time)
       $header->set( 'Date' => 'Thu, 25 Apr 1999 00:40:33 GMT' ); # wrong
       $header->delete('Date'); # wrong
   }
 
 =item Expires
 
-You can't assign to the Expires header directly
+You shouldn't assign to the Expires header directly
 because the following behavior will surprise us:
 
-  # wrong
+  # confusing
   $header->set( 'Expires' => '+3d' );
 
   my $value = $header->get('Expires');
-  # => "Thu, 25 Apr 1999 00:40:33 GMT" (not "+3d")
+  # => "+3d" (not "Thu, 25 Apr 1999 00:40:33 GMT")
 
 Use expires() instead:
 
@@ -994,7 +869,7 @@ If the following condition is met, the Pragma header will be set
 automatically, and also the header field will become read-only:
 
   if ( $header->query->cache ) {
-      my $pragma = $header->get('Pragma'); # => 'no-cache'
+      my $pragma = $header->as_hashref->{'Pragma'}; # => 'no-cache'
       $header->set( 'Pragma' => 'no-cache' ); # wrong
       $header->delete('Pragma'); # wrong
   }
@@ -1005,11 +880,11 @@ If the following condition is met, the Server header will be set
 automatically, and also the header field will become read-only: 
 
   if ( $header->nph ) {
-      my $server = $header->get('Server');
+      my $server = $header->as_hashref->{'Server'};
       # => $header->query->server_software
 
       $header->set( 'Server' => 'Apache/1.3.27 (Unix)' ); # wrong
-      $header->delete( 'Server' ); # wrong
+      $header->delete('Server'); # wrong
   }
 
 
