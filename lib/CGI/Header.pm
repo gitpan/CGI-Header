@@ -2,9 +2,10 @@ package CGI::Header;
 use 5.008_009;
 use strict;
 use warnings;
+use CGI qw//;
 use Carp qw/croak/;
 
-our $VERSION = '0.44';
+our $VERSION = '0.45';
 
 my %Property_Alias = (
     'cookies'       => 'cookie',
@@ -42,7 +43,6 @@ sub query {
 }
 
 sub _build_query {
-    require CGI;
     CGI::self_or_default();
 }
 
@@ -62,7 +62,7 @@ sub rehash {
 
         $header->{$prop} = delete $header->{$key}; # rename $key to $prop
     }
-
+    
     $self;
 }
 
@@ -94,17 +94,6 @@ sub clear {
     my $self = shift;
     %{ $self->{header} } = ();
     $self;
-}
-
-sub clone {
-    my $self = shift;
-    my %copy = %{ $self->{header} };
-
-    ref($self)->new(
-        handler => $self->{handler},
-        header  => \%copy,
-        query   => $self->query,
-    );
 }
 
 BEGIN {
@@ -181,83 +170,6 @@ sub p3p {
     $self;
 }
 
-sub as_hashref {
-    +{ $_[0]->flatten(0) };
-}
-
-sub flatten {
-    my $self    = shift;
-    my $level   = defined $_[0] ? int shift : 1;
-    my $handler = $self->{handler};
-    my $query   = $self->query;
-    my %copy    = %{ $self->{header} };
-
-    my @headers;
-
-    if ( $handler eq 'redirect' ) {
-        $copy{location} = $query->self_url if !$copy{location};
-        $copy{status} = '302 Found' if !defined $copy{status};
-        $copy{type} = q{} if !exists $copy{type};
-    }
-    elsif ( $handler eq 'none' ) {
-        return \@headers;
-    } 
-
-    my ( $charset, $cookie, $expires, $nph, $status, $target, $type )
-        = delete @copy{qw/charset cookie expires nph status target type/};
-
-    push @headers, 'Server', $query->server_software if $nph or $query->nph;
-    push @headers, 'Status', $status        if $status;
-    push @headers, 'Window-Target', $target if $target;
-
-    if ( my $p3p = delete $copy{p3p} ) {
-        my $tags = ref $p3p eq 'ARRAY' ? join ' ', @{$p3p} : $p3p;
-        push @headers, 'P3P', qq{policyref="/w3c/p3p.xml", CP="$tags"};
-    }
-
-    my @cookies = ref $cookie eq 'ARRAY' ? @{$cookie} : $cookie;
-       @cookies = map { $self->_bake_cookie($_) || () } @cookies;
-
-    if ( @cookies ) {
-        if ( $level == 0 ) {
-            push @headers, 'Set-Cookie', \@cookies;
-        }
-        else {
-            push @headers, map { ('Set-Cookie', $_) } @cookies;
-        }
-    }
-
-    push @headers, 'Expires', $self->_date($expires) if $expires;
-    push @headers, 'Date', $self->_date if $expires or $cookie or $nph;
-    push @headers, 'Pragma', 'no-cache' if $query->cache;
-
-    if ( my $attachment = delete $copy{attachment} ) {
-        my $value = qq{attachment; filename="$attachment"};
-        push @headers, 'Content-Disposition', $value;
-    }
-
-    push @headers, map { ucfirst $_, $copy{$_} } keys %copy;
-
-    if ( !defined $type or $type ne q{} ) {
-        $charset = $query->charset unless defined $charset;
-        my $ct = $type || 'text/html';
-        $ct .= "; charset=$charset" if $charset && $ct !~ /\bcharset\b/;
-        push @headers, 'Content-Type', $ct;
-    }
-
-    @headers;
-}
-
-sub _bake_cookie {
-    my ( $self, $cookie ) = @_;
-    ref $cookie eq 'CGI::Cookie' ? $cookie->as_string : $cookie;
-}
-
-sub _date {
-    require CGI::Util;
-    CGI::Util::expires( $_[1], 'http' );
-}
-
 sub as_string {
     my $self    = shift;
     my $handler = $self->{handler};
@@ -268,17 +180,11 @@ sub as_string {
             return $query->$method( $self->{header} );
         }
         else {
-            croak ref($query) . " is missing '$handler' method";
+            croak ref($self) . " is missing '$handler' method";
         }
     }
-    elsif ( $handler eq 'none' ) {
-        return q{};
-    }
-    else {
-        croak "Invalid handler '$handler'";
-    }
 
-    return;
+    croak "Invalid handler '$handler'";
 }
 
 1;
@@ -323,7 +229,7 @@ CGI::Header - Handle CGI.pm-compatible HTTP header properties
 
 =head1 VERSION
 
-This document refers to CGI::Header version 0.44.
+This document refers to CGI::Header version 0.45.
 
 =head1 DEPENDENCIES
 
@@ -510,30 +416,6 @@ Returns the value of the deleted field.
 
 This will remove all header fields.
 
-=item $clone = $header->clone
-
-Returns a copy of this CGI::Header object.
-It's identical to:
-
-  my %copy = %{ $header->header }; # shallow copy
-  my $clone = CGI::Header->new( \%copy, $header->query );
-
-=item @headers = $header->flatten
-
-Returns pairs of fields and values. 
-
-  # $cookie1 and $cookie2 are CGI::Cookie objects
-  my $header = CGI::Header->new( cookie => [$cookie1, $cookie2] );
-
-  $header->flatten;
-  # => (
-  #     "Set-Cookie" => "$cookie1",
-  #     "Set-Cookie" => "$cookie2",
-  #     ...
-  # )
-
-=item $header->as_hashref
-
 =item $header->as_string
 
 If C<< $header->handler >> is set to C<header>, it's identical to:
@@ -543,8 +425,6 @@ If C<< $header->handler >> is set to C<header>, it's identical to:
 If C<< $header->handler >> is set to C<redirect>, it's identical to:
 
   $header->query->redirect( $header->header );
-
-If C<< $header->handler >> is set to C<none>, returns an empty string.
 
 =back
 
