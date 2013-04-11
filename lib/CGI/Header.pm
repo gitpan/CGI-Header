@@ -2,10 +2,9 @@ package CGI::Header;
 use 5.008_009;
 use strict;
 use warnings;
-use CGI qw//;
 use Carp qw/croak/;
 
-our $VERSION = '0.45';
+our $VERSION = '0.46';
 
 my %Property_Alias = (
     'cookies'       => 'cookie',
@@ -43,6 +42,7 @@ sub query {
 }
 
 sub _build_query {
+    require CGI;
     CGI::self_or_default();
 }
 
@@ -62,7 +62,7 @@ sub rehash {
 
         $header->{$prop} = delete $header->{$key}; # rename $key to $prop
     }
-    
+
     $self;
 }
 
@@ -100,9 +100,11 @@ BEGIN {
     my @props = qw(
         attachment
         charset
+        cookie
         expires
         location
         nph
+        p3p
         status
         target
         type
@@ -121,50 +123,19 @@ BEGIN {
     }
 }
 
-sub cookie {
-    my $self = shift;
-
-    if ( @_ ) {
-        $self->{header}->{cookie} = @_ > 1 ? [ @_ ] : shift;
-    }
-    elsif ( my $cookie = $self->{header}->{cookie} ) {
-        my @cookies = ref $cookie eq 'ARRAY' ? @{$cookie} : $cookie;
-        return @cookies;
-    }
-    else {
-        return;
-    }
-
-    $self;
-}
-
 sub push_cookie {
-    my ( $self, @cookies ) = @_;
-    my $header = $self->{header};
-
-    if ( my $cookie = $header->{cookie} ) {
-        return push @{$cookie}, @cookies if ref $cookie eq 'ARRAY';
-        unshift @cookies, $cookie;
-    }
-
-    $header->{cookie} = @cookies > 1 ? \@cookies : $cookies[0];
-
-    scalar @cookies;
-}
-
-sub p3p {
     my $self   = shift;
+    my $cookie = $self->query->cookie( @_ );
     my $header = $self->{header};
 
-    if ( @_ ) {
-        $header->{p3p} = @_ > 1 ? [ @_ ] : shift;
+    if ( ref $header->{cookie} eq 'ARRAY' ) {
+        push @{ $header->{cookie} }, $cookie;
     }
-    elsif ( my $p3p = $header->{p3p} ) {
-        my @tags = ref $p3p eq 'ARRAY' ? @{$p3p} : $p3p;
-        return map { split ' ', $_ } @tags;
+    elsif ( exists $header->{cookie} ) {
+        $header->{cookie} = [ $header->{cookie}, $cookie ];
     }
     else {
-        return;
+        $header->{cookie} = $cookie;
     }
 
     $self;
@@ -173,18 +144,18 @@ sub p3p {
 sub as_string {
     my $self    = shift;
     my $handler = $self->{handler};
-    my $query   = $self->query;
 
     if ( $handler eq 'header' or $handler eq 'redirect' ) {
-        if ( my $method = $query->can($handler) ) {
-            return $query->$method( $self->{header} );
-        }
-        else {
-            croak ref($self) . " is missing '$handler' method";
-        }
+        return $self->query->$handler( $self->{header} );
+    }
+    elsif ( $handler eq 'none' ) {
+        return q{};
+    }
+    else {
+        croak "Invalid handler '$handler'";
     }
 
-    croak "Invalid handler '$handler'";
+    return;
 }
 
 1;
@@ -229,7 +200,7 @@ CGI::Header - Handle CGI.pm-compatible HTTP header properties
 
 =head1 VERSION
 
-This document refers to CGI::Header version 0.45.
+This document refers to CGI::Header version 0.46.
 
 =head1 DEPENDENCIES
 
@@ -240,8 +211,8 @@ This module is compatible with CGI.pm 3.51 or higher.
 This module is a utility class to manipulate a hash reference
 received by CGI.pm's C<header()> method.
 
-This module isn't the replacement of the C<CGI::header()> function,
-but complements CGI.pm.
+This module isn't the replacement of the C<header()> method, but complements
+CGI.pm.
 
 This module can be used in the following situation:
 
@@ -251,7 +222,7 @@ This module can be used in the following situation:
 
 For example, L<CGI::Application> implements C<header_add()> method
 which can be used to add CGI.pm-compatible HTTP header properties.
-Instances of CGI applications often hold those properties.
+Instances of CGI.pm-based applications often hold those properties.
 
   my $header = { type => 'text/plain' };
 
@@ -283,7 +254,7 @@ CGI::Header normalizes them automatically.
   #
 
 C<header()> function just stringifies given header properties.
-This module can be used to generate L<PSGI>-compatible header
+This module can be used to generate L<PSGI>-compatible response header
 array references. See L<CGI::Header::PSGI>.
 
 =back
@@ -414,7 +385,7 @@ Returns the value of the deleted field.
 
 =item $self = $header->clear
 
-This will remove all header fields.
+This will remove all header properties.
 
 =item $header->as_string
 
@@ -466,17 +437,19 @@ In this case, the outgoing header will be formatted as:
 Get or set the C<charset> property. Represents the character set sent to
 the browser.
 
-=item $self = $header->cookie( @cookies )
+=item $self = $header->cookie( $cookie )
 
-=item @cookies = $header->cookie
+=item $cookie = $header->cookie
 
 Get or set the C<cookie> property.
-The parameter can be a list of L<CGI::Cookie> objects.
 
-=item $header->push_cookie( @cookie )
+=item $header->push_cookie({ name => $name, value => $value, ... })
 
-Given a list of L<CGI::Cookie> objects, appends them to the C<cookie>
+The given argument will be passed to C<< $header->query->cookie >> method
+to create L<CGI::Cookie> object. The object will be added to the C<cookie>
 property.
+
+  $header->push_cookie( riddle_name => "The Sphynx's Question" );
 
 =item $self = $header->expires
 
@@ -515,21 +488,17 @@ with a NPH (no-parse-header) script.
 
   $header->nph(1);
 
-=item @tags = $header->p3p
+=item $tags = $header->p3p
 
-=item $self = $header->p3p( @tags )
+=item $self = $header->p3p( $tags )
 
 Get or set the C<p3p> property.
-The parameter can be an array or a space-delimited
-string. Returns a list of P3P tags. (In scalar context,
-returns the number of P3P tags.)
+The parameter can be an arrayref or a space-delimited
+string.
 
-  $header->p3p(qw/CAO DSP LAW CURa/);
+  $header->p3p([qw/CAO DSP LAW CURa/]);
   # or
-  $header->p3p( 'CAO DSP LAW CURa' );
-
-  my @tags = $header->p3p; # => ("CAO", "DSP", "LAW", "CURa")
-  my $size = $header->p3p; # => 4
+  $header->p3p('CAO DSP LAW CURa');
 
 In this case, the outgoing header will be formatted as:
 
@@ -577,7 +546,7 @@ to CGI response headers sent by blosxom.cgi:
   }
 
   sub last {
-      my $h = CGI::Header->new( $blosxom::header )->rehash;
+      my $h = CGI::Header->new( header => $blosxom::header )->rehash;
       $h->set( 'Content-Length' => length $blosxom::output );
   }
 
@@ -586,15 +555,6 @@ to CGI response headers sent by blosxom.cgi:
 Since L<Blosxom|http://blosxom.sourceforge.net/> depends on the procedural
 interface of CGI.pm, you don't have to pass C<$query> to C<new()>
 in this case.
-
-=head2 CONVERTING TO HTTP::Headers OBJECTS
-
-  use CGI::Header;
-  use HTTP::Headers;
-
-  my @header_props = ( type => 'text/plain', ... );
-  my $h = HTTP::Headers->new( CGI::Header->new(@header_props)->flatten );
-  $h->header( 'Content-Type' ); # => "text/plain"
 
 =head1 LIMITATIONS
 
@@ -629,25 +589,9 @@ If one of the following conditions is met, the Date header will be set
 automatically, and also the header field will become read-only:
 
   if ( $header->nph or $header->cookie or $header->expires ) {
-      my $date = $header->as_hashref->{'Date'}; # => HTTP-Date (current time)
       $header->set( 'Date' => 'Thu, 25 Apr 1999 00:40:33 GMT' ); # wrong
       $header->delete('Date'); # wrong
   }
-
-=item Expires
-
-You shouldn't assign to the Expires header directly
-because the following behavior will surprise us:
-
-  # confusing
-  $header->set( 'Expires' => '+3d' );
-
-  my $value = $header->get('Expires');
-  # => "+3d" (not "Thu, 25 Apr 1999 00:40:33 GMT")
-
-Use expires() instead:
-
-  $header->expires('+3d');
 
 =item P3P
 
@@ -666,7 +610,6 @@ If the following condition is met, the Pragma header will be set
 automatically, and also the header field will become read-only:
 
   if ( $header->query->cache ) {
-      my $pragma = $header->as_hashref->{'Pragma'}; # => 'no-cache'
       $header->set( 'Pragma' => 'no-cache' ); # wrong
       $header->delete('Pragma'); # wrong
   }
@@ -677,9 +620,6 @@ If the following condition is met, the Server header will be set
 automatically, and also the header field will become read-only: 
 
   if ( $header->nph ) {
-      my $server = $header->as_hashref->{'Server'};
-      # => $header->query->server_software
-
       $header->set( 'Server' => 'Apache/1.3.27 (Unix)' ); # wrong
       $header->delete('Server'); # wrong
   }
@@ -689,7 +629,7 @@ automatically, and also the header field will become read-only:
 
 =head1 SEE ALSO
 
-L<CGI>, L<Plack::Util>::headers(), L<HTTP::Headers>
+L<CGI>, L<HTTP::Headers>
 
 =head1 BUGS
 
