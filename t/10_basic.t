@@ -1,14 +1,26 @@
 use strict;
 use warnings;
 use CGI::Header;
-use Test::More tests => 26;
+use Test::More tests => 31;
 
-my $header = CGI::Header->new;
+my $header = CGI::Header->new(
+    header => {
+        '-Content_Type'  => 'text/plain',
+        '-Set_Cookie'    => 'ID=123456; path=/',
+        '-Window_Target' => 'ResultsWindow',
+    },
+);
 
 isa_ok $header, 'CGI::Header';
 isa_ok $header->header, 'HASH';
 isa_ok $header->query, 'CGI';
-is $header->handler, 'header';
+
+is $header->rehash, $header;
+is_deeply $header->header, {
+    'type'    => 'text/plain',
+    'cookies' => 'ID=123456; path=/',
+    'target'  => 'ResultsWindow',
+};
 
 is $header->set('Foo' => 'bar'), 'bar';
 is $header->get('Foo'), 'bar';
@@ -24,11 +36,8 @@ is $header->p3p, 'CAO DSP LAW CURa';
 is $header->status('304 Not Modified'), $header;
 is $header->status, '304 Not Modified';
 
-#is $header->cookie([qw/cookie1 cookie2/]), $header;
-#is_deeply $header->cookie, [qw/cookie1 cookie2/];
-
-is $header->push_cookie( riddle_name => "The Sphynx's Question" ), $header;
-is $header->cookie->name, 'riddle_name';
+is $header->cookies([qw/cookie1 cookie2/]), $header;
+is_deeply $header->cookies, [qw/cookie1 cookie2/];
 
 is $header->target('ResultsWindow'), $header;
 is $header->target, 'ResultsWindow';
@@ -42,5 +51,11 @@ is $header->charset, 'utf-8';
 is $header->attachment('genome.jpg'), $header;
 is $header->attachment, 'genome.jpg';
 
+is $header->redirect('http://somewhere.else/in/movie/land'), $header;
+is $header->location, 'http://somewhere.else/in/movie/land';
+is $header->status, '302 Found';
+
 is $header->clear, $header;
 is_deeply $header->header, {};
+
+like $header->as_string, qr{^Content-Type: text/html; charset=ISO-8859-1};

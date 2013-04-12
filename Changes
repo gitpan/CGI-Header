@@ -1,5 +1,14 @@
 Revision history for Perl extension CGI::Header.
 
+0.47  Apr 12th, 2013
+
+  - Remove handler() and add redirect() instead
+  - Rename cookie() to cookies() since the "cookie" property can be an
+    arrayref
+  - Remove push_cookie(). It's up to you to decide how to manage HTTP cookies.
+    For example, Plack::Response#cookies behaves like HASH. On the other
+    hand, Mojo::Message::Response#cookies behaves like ARRAY.
+
 0.46  Apr 11th, 2013
 
   - Remove CGI::Header::PSGI from this distribution. Sorry for confusing

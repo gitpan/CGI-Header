@@ -4,12 +4,12 @@ use strict;
 use warnings;
 use Carp qw/croak/;
 
-our $VERSION = '0.46';
+our $VERSION = '0.47';
 
 my %Property_Alias = (
-    'cookies'       => 'cookie',
+    'cookie'        => 'cookies',
     'content-type'  => 'type',
-    'set-cookie'    => 'cookie',
+    'set-cookie'    => 'cookies',
     'uri'           => 'location',
     'url'           => 'location',
     'window-target' => 'target',
@@ -19,7 +19,6 @@ sub new {
     my $class = shift;
 
     bless {
-        handler => 'header',
         header => {},
         @_
     }, $class;
@@ -27,13 +26,6 @@ sub new {
 
 sub header {
     $_[0]->{header};
-}
-
-sub handler {
-    my $self = shift;
-    return $self->{handler} unless @_;
-    $self->{handler} = shift;
-    $self;
 }
 
 sub query {
@@ -97,10 +89,10 @@ sub clear {
 }
 
 BEGIN {
-    my @props = qw(
+    my @Property_Names = qw(
         attachment
         charset
-        cookie
+        cookies
         expires
         location
         nph
@@ -110,7 +102,7 @@ BEGIN {
         type
     );
 
-    for my $prop ( @props ) {
+    for my $prop ( @Property_Names ) {
         my $code = sub {
             my $self = shift;
             return $self->{header}->{$prop} unless @_;
@@ -123,39 +115,14 @@ BEGIN {
     }
 }
 
-sub push_cookie {
-    my $self   = shift;
-    my $cookie = $self->query->cookie( @_ );
-    my $header = $self->{header};
-
-    if ( ref $header->{cookie} eq 'ARRAY' ) {
-        push @{ $header->{cookie} }, $cookie;
-    }
-    elsif ( exists $header->{cookie} ) {
-        $header->{cookie} = [ $header->{cookie}, $cookie ];
-    }
-    else {
-        $header->{cookie} = $cookie;
-    }
-
-    $self;
+sub redirect {
+    my ( $self, $url, $status ) = @_;
+    $self->status( $status || '302 Found' )->location( $url );
 }
 
 sub as_string {
-    my $self    = shift;
-    my $handler = $self->{handler};
-
-    if ( $handler eq 'header' or $handler eq 'redirect' ) {
-        return $self->query->$handler( $self->{header} );
-    }
-    elsif ( $handler eq 'none' ) {
-        return q{};
-    }
-    else {
-        croak "Invalid handler '$handler'";
-    }
-
-    return;
+    my $self = shift;
+    $self->query->header( $self->{header} );
 }
 
 1;
@@ -177,7 +144,7 @@ CGI::Header - Handle CGI.pm-compatible HTTP header properties
   my $header = {
       attachment => 'foo.gif',
       charset    => 'utf-7',
-      cookie     => [ $cookie1, $cookie2 ], # CGI::Cookie objects
+      cookies    => [ $cookie1, $cookie2 ], # CGI::Cookie objects
       expires    => '+3d',
       nph        => 1,
       p3p        => [qw/CAO DSP LAW CURa/],
@@ -200,7 +167,7 @@ CGI::Header - Handle CGI.pm-compatible HTTP header properties
 
 =head1 VERSION
 
-This document refers to CGI::Header version 0.46.
+This document refers to CGI::Header version 0.47.
 
 =head1 DEPENDENCIES
 
@@ -268,14 +235,6 @@ array references. See L<CGI::Header::PSGI>.
 Returns your current query object. This attribute defaults to the Singleton
 instance of CGI.pm (C<$CGI::Q>) which is shared by functions exported by the module.
 
-=item $self = $header->handler('redirect')
-
-Works like C<CGI::Application>'s C<header_type> method.
-This method can be used to declare that you are setting a redirection
-header. This attribute defaults to C<header>.
-
-  $header->handler('redirect')->as_string; # invokes $header->query->redirect
-
 =item $hashref = $header->header
 
 Returns the header hash reference associated with this CGI::Header object.
@@ -312,7 +271,7 @@ as you expect.
   my $h2 = $header->header; # same reference as $h1
   # => {
   #     'type'           => 'text/plain',
-  #     'cookie'         => 'ID=123456; path=/',
+  #     'cookies'        => 'ID=123456; path=/',
   #     'expires'        => '+3d',
   #     'target'         => 'ResultsWindow',
   #     'content-length' => '3002'
@@ -336,8 +295,8 @@ C<CGI::header()> also accepts aliases of parameter names.
 This module converts them as follows:
 
  'content-type'  -> 'type'
- 'cookies'       -> 'cookie'
- 'set-cookie'    -> 'cookie'
+ 'cookie'        -> 'cookies'
+ 'set-cookie'    -> 'cookies'
  'uri'           -> 'location'
  'url'           -> 'location'
  'window-target' -> 'target'
@@ -389,13 +348,9 @@ This will remove all header properties.
 
 =item $header->as_string
 
-If C<< $header->handler >> is set to C<header>, it's identical to:
+It's identical to:
 
   $header->query->header( $header->header );
-
-If C<< $header->handler >> is set to C<redirect>, it's identical to:
-
-  $header->query->redirect( $header->header );
 
 =back
 
@@ -437,23 +392,15 @@ In this case, the outgoing header will be formatted as:
 Get or set the C<charset> property. Represents the character set sent to
 the browser.
 
-=item $self = $header->cookie( $cookie )
+=item $self = $header->cookies([ $cookie1, $cookie2, ... ])
 
-=item $cookie = $header->cookie
+=item $cookies = $header->cookies
 
-Get or set the C<cookie> property.
+Get or set the C<cookies> property.
 
-=item $header->push_cookie({ name => $name, value => $value, ... })
+=item $self = $header->expires( $format )
 
-The given argument will be passed to C<< $header->query->cookie >> method
-to create L<CGI::Cookie> object. The object will be added to the C<cookie>
-property.
-
-  $header->push_cookie( riddle_name => "The Sphynx's Question" );
-
-=item $self = $header->expires
-
-=item $header->expires( $format )
+=item $format = $header->expires
 
 Get or set the C<expires> property.
 The Expires header gives the date and time after which the entity
@@ -503,6 +450,13 @@ string.
 In this case, the outgoing header will be formatted as:
 
   P3P: policyref="/w3c/p3p.xml", CP="CAO DSP LAW CURa"
+
+=item $self = $header->redirect( $url[, $status] );
+
+Sets redirect URL with an optional status code and a human-readable
+message, which defaults to C<302 Found>. Returns this object itself.
+
+  $header->redirect('http://somewhere.else/in/movie/land');
 
 =item $self = $header->status( $status )
 
