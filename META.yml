@@ -3,9 +3,11 @@ abstract: 'Handle CGI.pm-compatible HTTP header properties'
 author:
   - 'Ryo Anazawa (anazawa@cpan.org)'
 build_requires:
+  CGI::Simple: 0
   ExtUtils::MakeMaker: 6.59
   Test::More: 0.98
   Test::Pod: 1.45
+  base: 0
 configure_requires:
   ExtUtils::MakeMaker: 6.59
 distribution_type: module
@@ -29,4 +31,4 @@ requires:
 resources:
   license: http://dev.perl.org/licenses/
   repository: https://github.com/anazawa/p5-CGI-Header
-version: 0.47
+version: 0.48

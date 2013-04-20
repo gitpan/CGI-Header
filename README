@@ -8,32 +8,29 @@ SYNOPSIS
       my $query = CGI->new;
 
       # CGI.pm-compatible HTTP header properties
-      my $header = {
-          attachment => 'foo.gif',
-          charset    => 'utf-7',
-          cookies    => [ $cookie1, $cookie2 ], # CGI::Cookie objects
-          expires    => '+3d',
-          nph        => 1,
-          p3p        => [qw/CAO DSP LAW CURa/],
-          target     => 'ResultsWindow',
-          type       => 'image/gif'
-      };
-
-      # create a CGI::Header object
-      my $h = CGI::Header->new(
-          header => $header,
-          query  => $query
+      my $header = CGI::Header->new(
+          query => $query,
+          header => {
+              attachment => 'foo.gif',
+              charset    => 'utf-7',
+              cookies    => [ $cookie1, $cookie2 ], # CGI::Cookie objects
+              expires    => '+3d',
+              nph        => 1,
+              p3p        => [qw/CAO DSP LAW CURa/],
+              target     => 'ResultsWindow',
+              type       => 'image/gif'
+          },
       );
 
       # update $header
-      $h->set( 'Content-Length' => 3002 ); # overwrite
-      $h->delete('Content-Disposition'); # => 3002
-      $h->clear; # => $self
+      $header->set( 'Content-Length' => 3002 ); # overwrite
+      $header->delete('Content-Disposition'); # => 3002
+      $header->clear; # => $self
 
-      $h->header; # same reference as $header
+      $header->as_string; # => "Content-Type: text/html\n..."
 
 VERSION
-    This document refers to CGI::Header version 0.47.
+    This document refers to CGI::Header version 0.48.
 
 DEPENDENCIES
     This module is compatible with CGI.pm 3.51 or higher.
@@ -83,23 +80,21 @@ DESCRIPTION
         references. See CGI::Header::PSGI.
 
   ATTRIBUTES
-    $query = $header->query
+    $header->query
         Returns your current query object. This attribute defaults to the
-        Singleton instance of CGI.pm ($CGI::Q) which is shared by functions
+        Singleton instance of CGI.pm ($CGI::Q), which is shared by functions
         exported by the module.
 
     $hashref = $header->header
         Returns the header hash reference associated with this CGI::Header
-        object. This attribute defaults to a reference to an empty hash. You
-        can always pass the header hash to "CGI::header()" function to
-        generate CGI response headers:
-
-          print CGI::header( $header->header );
+        object. This attribute defaults to a reference to an empty hash. The
+        hashref will be passed to CGI.pm's "header" method to generate CGI
+        response headers. See "CGI::Header#as_string".
 
   METHODS
     $self = $header->rehash
-        Rebuilds the header hash to normalize parameter names without
-        changing the reference. Returns this object itself. If parameter
+        Rebuilds the header hash to normalize property names without
+        changing the reference. Returns this object itself. If property
         names aren't normalized, the methods listed below won't work as you
         expect.
 
@@ -131,14 +126,12 @@ DESCRIPTION
         2. use dashes instead of underscores in property name
               'content_length' -> 'content-length'
 
-        "CGI::header()" also accepts aliases of parameter names. This module
-        converts them as follows:
+        CGI.pm's "header" method also accepts aliases of property names.
+        This module converts them as follows:
 
          'content-type'  -> 'type'
          'cookie'        -> 'cookies'
          'set-cookie'    -> 'cookies'
-         'uri'           -> 'location'
-         'url'           -> 'location'
          'window-target' -> 'target'
 
         If a property name is duplicated, throws an exception:
@@ -311,6 +304,45 @@ EXAMPLES
     procedural interface of CGI.pm, you don't have to pass $query to "new()"
     in this case.
 
+  HANDLING HTTP COOKIES
+    It's up to you to decide how to manage HTTP cookies.
+
+      use parent 'CGI::Header';
+
+      # Add cookie() attribute which defaults a reference to an empty hash.
+      # The keys of the hash are the cookies' names, and their corresponding
+      # values are a plain string, e.g., "$header->cookie->{ID} = 123456"
+      sub cookie {
+          $_[0]->{cookie} ||= {};
+      }
+
+      # Override as_string() to create and set CGI::Cookie objects right before
+      # stringifying header props.
+      sub as_string {
+          my $self = shift;
+
+          my @cookies;
+          while ( my ($name, $value) = each %{$self->cookie} ) {
+              push @cookies, $self->query->cookie( $name => $value );
+          }
+
+          $self->cookies( \@cookies )->SUPER::as_string;
+      }
+
+  WORKING WITH CGI::Simple
+    Since CGI::Simple is "a relatively lightweight drop in replacement for
+    CGI.pm", this module is compatible with the module. If you're using the
+    procedural interface of the module (CGI::Simple::Standard), you need to
+    override the "_build_query" method as follows:
+
+      use parent 'CGI::Header';
+      use CGI::Simple::Standard;
+
+      sub _build_query {
+          # NOTE: loader() is designed for debugging
+          CGI::Simple::Standard->loader('_cgi_object');
+      }
+
 LIMITATIONS
     Since the following strings conflict with property names, you can't use
     them as field names ($field):
@@ -324,15 +356,13 @@ LIMITATIONS
       "Type"
 
     Content-Type
-        You can set the Content-Type header to neither undef nor an empty:
-
-          # wrong
-          $header->set( 'Content-Type' => undef );
-          $header->set( 'Content-Type' => q{} );
-
-        Set "type" property to an empty string:
+        If you don't want to send the Content-Type header, set the "type"
+        property to an empty string, though it's far from intuitive
+        manipulation:
 
           $header->type(q{});
+
+          $header->type(undef); # doesn't work as you expect
 
     Date
         If one of the following conditions is met, the Date header will be

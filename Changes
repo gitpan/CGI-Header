@@ -1,5 +1,12 @@
 Revision history for Perl extension CGI::Header.
 
+0.48 (RC-1.00) Apr 20th, 2013
+
+  - Add EXAMPLES to POD
+  - Add tests for EXAMPLES
+  - Tests require CGI::Simple
+  - Release candidate for CGI::Header 1.00 (RC-1.00)
+
 0.47  Apr 12th, 2013
 
   - Remove handler() and add redirect() instead

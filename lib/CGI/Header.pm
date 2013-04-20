@@ -4,14 +4,14 @@ use strict;
 use warnings;
 use Carp qw/croak/;
 
-our $VERSION = '0.47';
+our $VERSION = '0.48';
 
 my %Property_Alias = (
     'cookie'        => 'cookies',
     'content-type'  => 'type',
     'set-cookie'    => 'cookies',
-    'uri'           => 'location',
-    'url'           => 'location',
+    'uri'           => 'location', # for CGI#redirect
+    'url'           => 'location', # for CGI#redirect
     'window-target' => 'target',
 );
 
@@ -89,7 +89,7 @@ sub clear {
 }
 
 BEGIN {
-    my @Property_Names = qw(
+    for my $method (qw/
         attachment
         charset
         cookies
@@ -100,18 +100,16 @@ BEGIN {
         status
         target
         type
-    );
-
-    for my $prop ( @Property_Names ) {
-        my $code = sub {
+    /) {
+        my $body = sub {
             my $self = shift;
-            return $self->{header}->{$prop} unless @_;
-            $self->{header}->{$prop} = shift;
+            return $self->{header}->{$method} unless @_;
+            $self->{header}->{$method} = shift;
             $self;
         };
 
         no strict 'refs';
-        *{$prop} = $code;
+        *{$method} = $body;
     }
 }
 
@@ -141,33 +139,30 @@ CGI::Header - Handle CGI.pm-compatible HTTP header properties
   my $query = CGI->new;
 
   # CGI.pm-compatible HTTP header properties
-  my $header = {
-      attachment => 'foo.gif',
-      charset    => 'utf-7',
-      cookies    => [ $cookie1, $cookie2 ], # CGI::Cookie objects
-      expires    => '+3d',
-      nph        => 1,
-      p3p        => [qw/CAO DSP LAW CURa/],
-      target     => 'ResultsWindow',
-      type       => 'image/gif'
-  };
-
-  # create a CGI::Header object
-  my $h = CGI::Header->new(
-      header => $header,
-      query  => $query
+  my $header = CGI::Header->new(
+      query => $query,
+      header => {
+          attachment => 'foo.gif',
+          charset    => 'utf-7',
+          cookies    => [ $cookie1, $cookie2 ], # CGI::Cookie objects
+          expires    => '+3d',
+          nph        => 1,
+          p3p        => [qw/CAO DSP LAW CURa/],
+          target     => 'ResultsWindow',
+          type       => 'image/gif'
+      },
   );
 
   # update $header
-  $h->set( 'Content-Length' => 3002 ); # overwrite
-  $h->delete('Content-Disposition'); # => 3002
-  $h->clear; # => $self
+  $header->set( 'Content-Length' => 3002 ); # overwrite
+  $header->delete('Content-Disposition'); # => 3002
+  $header->clear; # => $self
 
-  $h->header; # same reference as $header
+  $header->as_string; # => "Content-Type: text/html\n..."
 
 =head1 VERSION
 
-This document refers to CGI::Header version 0.47.
+This document refers to CGI::Header version 0.48.
 
 =head1 DEPENDENCIES
 
@@ -230,19 +225,18 @@ array references. See L<CGI::Header::PSGI>.
 
 =over 4
 
-=item $query = $header->query
+=item $header->query
 
 Returns your current query object. This attribute defaults to the Singleton
-instance of CGI.pm (C<$CGI::Q>) which is shared by functions exported by the module.
+instance of CGI.pm (C<$CGI::Q>), which is shared by functions exported
+by the module.
 
 =item $hashref = $header->header
 
 Returns the header hash reference associated with this CGI::Header object.
 This attribute defaults to a reference to an empty hash.
-You can always pass the header hash to C<CGI::header()> function
-to generate CGI response headers:
-
-  print CGI::header( $header->header );
+The hashref will be passed to CGI.pm's C<header> method to generate
+CGI response headers. See C<CGI::Header#as_string>.
 
 =back
 
@@ -252,9 +246,9 @@ to generate CGI response headers:
 
 =item $self = $header->rehash
 
-Rebuilds the header hash to normalize parameter names
+Rebuilds the header hash to normalize property names
 without changing the reference. Returns this object itself.
-If parameter names aren't normalized, the methods listed below won't work
+If property names aren't normalized, the methods listed below won't work
 as you expect.
 
   my $h1 = $header->header;
@@ -291,14 +285,12 @@ Normalized property names are:
 
 =back
 
-C<CGI::header()> also accepts aliases of parameter names.
+CGI.pm's C<header> method also accepts aliases of property names.
 This module converts them as follows:
 
  'content-type'  -> 'type'
  'cookie'        -> 'cookies'
  'set-cookie'    -> 'cookies'
- 'uri'           -> 'location'
- 'url'           -> 'location'
  'window-target' -> 'target'
 
 If a property name is duplicated, throws an exception:
@@ -510,6 +502,48 @@ Since L<Blosxom|http://blosxom.sourceforge.net/> depends on the procedural
 interface of CGI.pm, you don't have to pass C<$query> to C<new()>
 in this case.
 
+=head2 HANDLING HTTP COOKIES
+
+It's up to you to decide how to manage HTTP cookies.
+
+  use parent 'CGI::Header';
+
+  # Add cookie() attribute which defaults a reference to an empty hash.
+  # The keys of the hash are the cookies' names, and their corresponding
+  # values are a plain string, e.g., "$header->cookie->{ID} = 123456"
+  sub cookie {
+      $_[0]->{cookie} ||= {};
+  }
+
+  # Override as_string() to create and set CGI::Cookie objects right before
+  # stringifying header props.
+  sub as_string {
+      my $self = shift;
+
+      my @cookies;
+      while ( my ($name, $value) = each %{$self->cookie} ) {
+          push @cookies, $self->query->cookie( $name => $value );
+      }
+
+      $self->cookies( \@cookies )->SUPER::as_string;
+  }
+
+=head2 WORKING WITH CGI::Simple
+
+Since L<CGI::Simple> is "a relatively lightweight drop in
+replacement for CGI.pm", this module is compatible with the module.
+If you're using the procedural interface of the module
+(L<CGI::Simple::Standard>), you need to override the C<_build_query> method
+as follows:
+
+  use parent 'CGI::Header';
+  use CGI::Simple::Standard;
+
+  sub _build_query {
+      # NOTE: loader() is designed for debugging
+      CGI::Simple::Standard->loader('_cgi_object');
+  }
+
 =head1 LIMITATIONS
 
 Since the following strings conflict with property names,
@@ -527,15 +561,13 @@ you can't use them as field names (C<$field>):
 
 =item Content-Type
 
-You can set the Content-Type header to neither undef nor an empty:
-
-  # wrong
-  $header->set( 'Content-Type' => undef );
-  $header->set( 'Content-Type' => q{} );
-
-Set C<type> property to an empty string:
+If you don't want to send the Content-Type header,
+set the C<type> property to an empty string, though it's far from intuitive
+manipulation:
 
   $header->type(q{});
+
+  $header->type(undef); # doesn't work as you expect
 
 =item Date
 
