@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Carp qw/croak/;
 
-our $VERSION = '0.50';
+our $VERSION = '0.51';
 
 my %Property_Alias = (
     'content-type'  => 'type',
@@ -116,6 +116,13 @@ sub as_string {
     $self->query->header( $self->{header} );
 }
 
+sub clone {
+    my $self = shift;
+    my $query = $self->query;
+    my %header = %{ $self->{header} };
+    ref( $self )->new( header => \%header, query => $query );
+}
+
 1;
 
 __END__
@@ -155,7 +162,7 @@ CGI::Header - Handle CGI.pm-compatible HTTP header properties
 
 =head1 VERSION
 
-This document refers to CGI::Header version 0.49.
+This document refers to CGI::Header version 0.51.
 
 =head1 DEPENDENCIES
 
@@ -484,17 +491,23 @@ It's up to you to decide how to manage HTTP cookies.
       $_[0]->{cookie} ||= {};
   }
 
+  # The 'cookies' property defaults to an arrayref
+  sub cookies {
+      $_[0]->header->{cookies} ||= [];
+  }
+
   # Override as_string() to create and set CGI::Cookie objects right before
   # stringifying header props.
   sub as_string {
-      my $self = shift;
+      my $self    = shift;
+      my $query   = $self->query;
+      my $cookies = $self->cookies;
 
-      my @cookies;
       while ( my ($name, $value) = each %{$self->cookie} ) {
-          push @cookies, $self->query->cookie( $name => $value );
+          push @{$cookies}, $query->cookie( $name => $value );
       }
 
-      $self->cookies( \@cookies )->SUPER::as_string;
+      $self->SUPER::as_string;
   }
 
 =head2 WORKING WITH CGI::Simple

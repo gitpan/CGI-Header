@@ -27,8 +27,9 @@ no_index:
 requires:
   CGI: 3.51
   Carp: 1.10
+  parent: 0
   perl: 5.8.9
 resources:
   license: http://dev.perl.org/licenses/
   repository: https://github.com/anazawa/p5-CGI-Header
-version: 0.50
+version: 0.51

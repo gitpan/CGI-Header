@@ -9,15 +9,20 @@ sub cookie {
     $_[0]->{cookie} ||= {};
 }
 
-sub as_string {
-    my $self = shift;
+sub cookies {
+    $_[0]->header->{cookies} ||= [];
+}
 
-    my @cookies;
+sub as_string {
+    my $self    = shift;
+    my $query   = $self->query;
+    my $cookies = $self->cookies;
+
     while ( my ($name, $value) = each %{$self->cookie} ) {
-        push @cookies, $self->query->cookie( $name => $value );
+        push @{$cookies}, $query->cookie( $name => $value );
     }
 
-    $self->cookies( \@cookies )->SUPER::as_string;
+    $self->SUPER::as_string;
 }
 
 package main;
