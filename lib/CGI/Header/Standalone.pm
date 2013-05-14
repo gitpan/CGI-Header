@@ -17,7 +17,8 @@ sub as_string {
 
     # add Status-Line required by NPH scripts
     if ( exists $response->{protocol} ) {
-        my ($protocol, $status) = @{$response}{qw/protocol status/};
+        my $protocol = $response->{protocol};
+        my $status = $self->_process_newline( $response->{status} );
         push @lines, "$protocol $status$crlf";
     }
 

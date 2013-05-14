@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Carp qw/croak/;
 
-our $VERSION = '0.51';
+our $VERSION = '0.52';
 
 my %Property_Alias = (
     'content-type'  => 'type',
@@ -118,9 +118,8 @@ sub as_string {
 
 sub clone {
     my $self = shift;
-    my $query = $self->query;
     my %header = %{ $self->{header} };
-    ref( $self )->new( header => \%header, query => $query );
+    ref( $self )->new( %$self, header => \%header );
 }
 
 1;
@@ -162,7 +161,7 @@ CGI::Header - Handle CGI.pm-compatible HTTP header properties
 
 =head1 VERSION
 
-This document refers to CGI::Header version 0.51.
+This document refers to CGI::Header version 0.52.
 
 =head1 DEPENDENCIES
 
@@ -284,6 +283,21 @@ This will remove all header properties.
 It's identical to:
 
   $header->query->header( $header->header );
+
+=item $header->clone
+
+Returns a copy of this C<CGI::Header> object.
+The C<query> object is shared. 
+The C<header> hashref is copied shallowly.
+It's identical to:
+
+  # surface copy
+  my %header = %{ $original->header };
+
+  my $clone = CGI::Header->new(
+      query  => $original->query, # shares query object
+      header => \%header
+  );
 
 =back
 
