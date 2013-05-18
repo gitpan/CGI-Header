@@ -5,6 +5,7 @@ author:
 build_requires:
   CGI::Simple: 0
   ExtUtils::MakeMaker: 6.59
+  Test::Exception: 0
   Test::MockTime: 0
   Test::More: 0.98
   Test::Pod: 1.45
@@ -33,4 +34,4 @@ requires:
 resources:
   license: http://dev.perl.org/licenses/
   repository: https://github.com/anazawa/p5-CGI-Header
-version: 0.52
+version: 0.53

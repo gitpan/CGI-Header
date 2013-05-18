@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Carp qw/croak/;
 
-our $VERSION = '0.52';
+our $VERSION = '0.53';
 
 my %Property_Alias = (
     'content-type'  => 'type',
@@ -161,7 +161,7 @@ CGI::Header - Handle CGI.pm-compatible HTTP header properties
 
 =head1 VERSION
 
-This document refers to CGI::Header version 0.52.
+This document refers to CGI::Header version 0.53.
 
 =head1 DEPENDENCIES
 
@@ -339,11 +339,15 @@ In this case, the outgoing header will be formatted as:
 Get or set the C<charset> property. Represents the character set sent to
 the browser.
 
+=item $self = $header->cookies( $cookie )
+
 =item $self = $header->cookies([ $cookie1, $cookie2, ... ])
 
 =item $cookies = $header->cookies
 
 Get or set the C<cookies> property.
+The parameter can be a L<CGI::Cookie> object or an arrayref which consists of
+L<CGI::Cookie> objects.
 
 =item $self = $header->expires( $format )
 
@@ -400,8 +404,8 @@ In this case, the outgoing header will be formatted as:
 
 =item $self = $header->redirect( $url[, $status] );
 
-Sets redirect URL with an optional status code and a human-readable
-message, which defaults to C<302 Found>. Returns this object itself.
+Sets redirect URL with an optional HTTP status of the response,
+which defaults to C<302 Found>. Returns this object itself.
 
   $header->redirect('http://somewhere.else/in/movie/land');
 
@@ -434,7 +438,6 @@ content.
 
 =head2 NORMALIZING PROPERTY NAMES
 
-This class normalizes property names automatically.
 Normalized property names are:
 
 =over 4
@@ -465,7 +468,7 @@ If a property name is duplicated, throws an exception:
           Content_Type => 'text/html',
       }
   );
-  # die "Property '-type' already exists"
+  # die "Property 'type' already exists"
 
 =head1 EXAMPLES
 
@@ -475,18 +478,38 @@ The following plugin just adds the Content-Length header
 to CGI response headers sent by blosxom.cgi:
 
   package content_length;
-  use CGI::Header;
+  use Blosxom::Header;
 
   sub start {
       !$blosxom::static_entries;
   }
 
   sub last {
-      my $h = CGI::Header->new( header => $blosxom::header )->rehash;
+      my $h = Blosxom::Header->instance;
       $h->set( 'Content-Length' => length $blosxom::output );
   }
 
-  1;
+C<Blosxom::Header> is defined as follows:
+
+  package Blosxom::Header;
+  use parent 'CGI::Header';
+  use Carp qw/croak/;
+
+  our $INSTANCE;
+
+  sub new {
+      my $class = shift;
+      croak "Private method 'new' called for $class";
+  }
+
+  sub instance {
+      my $class = shift;
+      $INSTANCE ||= $class->SUPER::new( header => $blosxom::header );
+  }
+
+  sub has_instance {
+      $INSTANCE;
+  }
 
 Since L<Blosxom|http://blosxom.sourceforge.net/> depends on the procedural
 interface of CGI.pm, you don't have to pass C<$query> to C<new()>
@@ -495,34 +518,36 @@ in this case.
 =head2 HANDLING HTTP COOKIES
 
 It's up to you to decide how to manage HTTP cookies.
+The following method behaves like L<Mojo::Message::Response>'s C<cookies>
+method:
 
   use parent 'CGI::Header';
+  use CGI::Cookie;
 
-  # Add cookie() attribute which defaults a reference to an empty hash.
-  # The keys of the hash are the cookies' names, and their corresponding
-  # values are a plain string, e.g., "$header->cookie->{ID} = 123456"
-  sub cookie {
-      $_[0]->{cookie} ||= {};
-  }
-
-  # The 'cookies' property defaults to an arrayref
   sub cookies {
-      $_[0]->header->{cookies} ||= [];
-  }
-
-  # Override as_string() to create and set CGI::Cookie objects right before
-  # stringifying header props.
-  sub as_string {
       my $self    = shift;
-      my $query   = $self->query;
-      my $cookies = $self->cookies;
+      my $cookies = $self->header->{cookies} ||= [];
 
-      while ( my ($name, $value) = each %{$self->cookie} ) {
-          push @{$cookies}, $query->cookie( $name => $value );
+      return $cookies unless @_;
+
+      if ( ref $_[0] eq 'HASH' ) {
+          push @$cookies, map { CGI::Cookie->new($_) } @_;
+      }
+      else {
+          push @$cookies, CGI::Cookie->new( @_ );
       }
 
-      $self->SUPER::as_string;
+      $self;
   }
+
+You can use the C<cookies> method as follows:
+
+  # get an arrayref which consists of CGI::Cookie objects
+  my $cookies = $header->cookies;
+
+  # set CGI::Cookie objects
+  $header->cookies( ID => 123456 );
+  $header->cookies({ name => 'ID', value => 123456 });
 
 =head2 WORKING WITH CGI::Simple
 
