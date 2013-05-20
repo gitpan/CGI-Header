@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Carp qw/croak/;
 
-our $VERSION = '0.53';
+our $VERSION = '0.54';
 
 my %Property_Alias = (
     'content-type'  => 'type',
@@ -111,7 +111,7 @@ sub redirect {
     $self->status( $status || '302 Found' )->location( $url );
 }
 
-sub as_string {
+sub finalize {
     my $self = shift;
     $self->query->header( $self->{header} );
 }
@@ -161,7 +161,7 @@ CGI::Header - Handle CGI.pm-compatible HTTP header properties
 
 =head1 VERSION
 
-This document refers to CGI::Header version 0.53.
+This document refers to CGI::Header version 0.54.
 
 =head1 DEPENDENCIES
 
@@ -278,7 +278,26 @@ Returns the value of the deleted field.
 
 This will remove all header properties.
 
-=item $header->as_string
+=item $header->finalize
+
+Returns the header fields as a formatted MIME header.
+If C<CGI::Header#nph> is true, the Status-Line is inserted to the beginning
+of the response headers.
+
+Valid multi-line header input is accepted when each line is separated
+with a CRLF value (C<\r\n> on most platforms) followed by at least one space.
+For example:
+
+  $header->set( Ingredients => "ham\r\n\seggs\r\n\sbacon" );
+
+Invalid multi-line header input will trigger in an exception.
+When multi-line headers are received, this method will always output them
+back as a single line, according to the folding rules of RFC 2616:
+the newlines will be removed, while white space remains.
+
+In L<mod_perl> environment, the formatted string
+is swallowed by L<Apache2::Response>'s C<send_cgi_header> method silently,
+and so an empty string is returned.
 
 It's identical to:
 
@@ -545,7 +564,7 @@ You can use the C<cookies> method as follows:
   # get an arrayref which consists of CGI::Cookie objects
   my $cookies = $header->cookies;
 
-  # set CGI::Cookie objects
+  # push a CGI::Cookie object onto the "cookies" property
   $header->cookies( ID => 123456 );
   $header->cookies({ name => 'ID', value => 123456 });
 
