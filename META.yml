@@ -8,6 +8,7 @@ build_requires:
   Test::Exception: 0
   Test::MockTime: 0
   Test::More: 0.98
+  Test::Output: 0
   Test::Pod: 1.45
   base: 0
 configure_requires:
@@ -34,4 +35,4 @@ requires:
 resources:
   license: http://dev.perl.org/licenses/
   repository: https://github.com/anazawa/p5-CGI-Header
-version: 0.55
+version: 0.56
