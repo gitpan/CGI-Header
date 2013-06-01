@@ -1,61 +1,21 @@
-package CGI::Header::Standalone;
+package CGI::Header::Adapter;
 use strict;
 use warnings;
 use parent 'CGI::Header';
 use Carp qw/croak/;
 
+sub crlf {
+    $CGI::CRLF;
+}
+
 sub finalize {
-    my $self     = shift;
-    my $query    = $self->query;
-    my $mod_perl = $self->_mod_perl;
-
-    if ( !$mod_perl or $self->nph or $query->nph ) {
-        return $query->print( $self->as_string );
-    }
-
-    require APR::Table if $mod_perl == 2;
-
-    my $status_line = $self->status || '200 OK';
-    my $headers     = $self->as_arrayref;
-    my $request_rec = $self->_request_rec;
-
-    my $status = $status_line;
-       $status =~ s/\D*$//;
-
-    my $headers_out = $status >= 200 && $status < 300 ? 'headers_out' : 'err_headers_out';  
-       $headers_out = $request_rec->$headers_out;
-
-    $request_rec->status_line( $status_line );
-
-    for ( my $i = 0; $i < @$headers; $i += 2 ) {
-        my $field = $headers->[$i];
-        my $value = $self->_process_newline( $headers->[$i+1] );
-
-        if ( $field eq 'Content-Type' ) {
-            $request_rec->content_type( $value );
-        }
-        else {
-            $headers_out->add( $field => $value );
-        }
-    }
-
-    $request_rec->send_http_header if $mod_perl == 1;
-
-    1;
-}
-
-sub _mod_perl {
-    $CGI::MOD_PERL;
-}
-
-sub _request_rec {
-    $_[0]->query->r;
+    croak 'call to abstract method ', __PACKAGE__, '::finalize';
 }
 
 sub as_string {
     my $self    = shift;
     my $query   = $self->query;
-    my $crlf    = $self->_crlf; # CGI.pm should be loaded
+    my $crlf    = $self->crlf;
     my $headers = $self->as_arrayref;
 
     my @lines;
@@ -63,14 +23,14 @@ sub as_string {
     # add Status-Line required by NPH scripts
     if ( $self->nph or $query->nph ) {
         my $protocol = $query->server_protocol;
-        my $status = $self->_process_newline( $self->status || '200 OK' );
+        my $status = $self->process_newline( $self->status || '200 OK' );
         push @lines, "$protocol $status$crlf";
     }
 
     # add response headers
     for ( my $i = 0; $i < @$headers; $i += 2 ) {
         my $field = $headers->[$i];
-        my $value = $self->_process_newline( $headers->[$i+1] );
+        my $value = $self->process_newline( $headers->[$i+1] );
         push @lines, "$field: $value$crlf";
     }
 
@@ -79,10 +39,10 @@ sub as_string {
     join q{}, @lines;
 }
 
-sub _process_newline {
+sub process_newline {
     my $self  = shift;
     my $value = shift;
-    my $crlf  = $self->_crlf;
+    my $crlf  = $self->crlf;
 
     # CR escaping for values, per RFC 822:
     # > Unfolding is accomplished by regarding CRLF immediately
@@ -97,10 +57,6 @@ sub _process_newline {
     }
 
     $value;
-}
-
-sub _crlf {
-    $CGI::CRLF;
 }
 
 sub as_arrayref {
@@ -164,12 +120,15 @@ __END__
 
 =head1 NAME
 
-CGI::Header::Standalone - Alternative to CGI::Header
+CGI::Header::Adapter - Base class for adapters
 
 =head1 SYNOPSIS
 
-  use CGI::Header::Standalone;
-  my $h = CGI::Header::Standalone->new; # behaves like CGI::Header object
+  use parent 'CGI::Header::Adapter';
+
+  sub finalize {
+      ...
+  }
 
 =head1 DESCRIPTION
 
@@ -194,22 +153,15 @@ the return value of CGI.pm's C<header> method.
 
 =item $header->as_string
 
-Return the header fields as a formatted MIME header.
+Returns the header fields as a formatted MIME header.
 If the C<nph> property is set to true, the Status-Line is inserted to
 the beginning of the response headers.
 
-=back
+=item $header->crlf
 
-This module overrides the following method of the superclass:
+Returns the system specific line ending sequence.
 
-=over 4
-
-=item $header->finalize
-
-Behaves like CGI.pm's C<header> method.
-In L<mod_perl> environment, unlike CGI.pm's C<header> method,
-this method updates "headers_out" method of C<request_rec> object directly,
-and so you can send headers effectively.
+=item $header->process_newline
 
 =back
 
@@ -219,7 +171,7 @@ Ryo Anazawa (anazawa@cpan.org)
 
 =head1 LICENSE
 
-This module is free software; you can redistibute it and/or
+This module is free software; you can redistribute it and/or
 modify it under the same terms as Perl itself. See L<perlartistic>.
 
 =cut

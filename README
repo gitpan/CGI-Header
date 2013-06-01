@@ -30,7 +30,7 @@ SYNOPSIS
       $header->finalize;
 
 VERSION
-    This document refers to CGI::Header version 0.56.
+    This document refers to CGI::Header version 0.57.
 
 DEPENDENCIES
     This module is compatible with CGI.pm 3.51 or higher.
@@ -443,6 +443,6 @@ AUTHOR
     Ryo Anazawa (anazawa@cpan.org)
 
 LICENSE
-    This module is free software; you can redistibute it and/or modify it
+    This module is free software; you can redistribute it and/or modify it
     under the same terms as Perl itself. See perlartistic.
 
