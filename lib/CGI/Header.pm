@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Carp qw/croak/;
 
-our $VERSION = '0.57';
+our $VERSION = '0.58';
 
 my %PropertyAlias = (
     'content-type'  => 'type',
@@ -24,17 +24,17 @@ sub _normalize {
 
 sub new {
     my $class  = shift;
-    my %args   = ( header => {}, @_ );
-    my $header = $args{header};
+    my $self   = bless { header => {}, @_ }, $class;
+    my $header = $self->{header};
 
-    for my $key ( keys %{$header} ) {
-        my $prop = $class->_normalize( $key );
+    for my $key ( keys %$header ) {
+        my $prop = $self->_normalize( $key );
         next if $key eq $prop; # $key is normalized
         croak "Property '$prop' already exists" if exists $header->{$prop};
         $header->{$prop} = delete $header->{$key}; # rename $key to $prop
     }
 
-    bless \%args, $class;
+    $self;
 }
 
 sub header {
@@ -112,10 +112,12 @@ sub redirect {
 }
 
 sub finalize {
-    my $self = shift;
-    my $query = $self->query;
+    my $self   = shift;
+    my $query  = $self->query;
     my $header = $self->{header};
+
     $query->print( $query->header($header) );
+
     return;
 }
 
@@ -164,7 +166,7 @@ CGI::Header - Handle CGI.pm-compatible HTTP header properties
 
 =head1 VERSION
 
-This document refers to CGI::Header version 0.57.
+This document refers to CGI::Header version 0.58.
 
 =head1 DEPENDENCIES
 
