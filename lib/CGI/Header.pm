@@ -4,41 +4,15 @@ use strict;
 use warnings;
 use Carp qw/croak/;
 
-our $VERSION = '0.58';
-
-my %PropertyAlias = (
-    'content-type'  => 'type',
-    'cookie'        => 'cookies',
-    'set-cookie'    => 'cookies',
-    'window-target' => 'target',
-);
-
-sub _normalize {
-    my $class = shift;
-    my $prop = lc shift;
-    $prop =~ s/^-//;
-    $prop =~ tr/_/-/;
-    $prop = $PropertyAlias{$prop} if exists $PropertyAlias{$prop};
-    $prop;
-}
+our $VERSION = '0.59';
 
 sub new {
-    my $class  = shift;
-    my $self   = bless { header => {}, @_ }, $class;
-    my $header = $self->{header};
-
-    for my $key ( keys %$header ) {
-        my $prop = $self->_normalize( $key );
-        next if $key eq $prop; # $key is normalized
-        croak "Property '$prop' already exists" if exists $header->{$prop};
-        $header->{$prop} = delete $header->{$key}; # rename $key to $prop
-    }
-
-    $self;
+    my ( $class, @args ) = @_;
+    ( bless { @args }, $class )->_rehash;
 }
 
 sub header {
-    $_[0]->{header};
+    $_[0]->{header} ||= {};
 }
 
 sub query {
@@ -51,33 +25,69 @@ sub _build_query {
     CGI::self_or_default();
 }
 
+sub _alias {
+    my $self = shift;
+    $self->{_alias} ||= $self->_build_alias;
+}
+
+sub _build_alias {
+    +{
+        'content-type' => 'type',
+        'cookie'       => 'cookies',
+    };
+}
+
+sub _normalize {
+    my ( $self, $key ) = @_;
+    my $alias = $self->_alias;
+    my $prop = lc $key;
+    $prop =~ s/^-//;
+    $prop =~ tr/_/-/;
+    $prop = $alias->{$prop} if exists $alias->{$prop};
+    $prop;
+}
+
+sub _rehash {
+    my $self   = shift;
+    my $header = $self->header;
+
+    for my $key ( keys %$header ) {
+        my $prop = $self->_normalize( $key );
+        next if $key eq $prop; # $key is normalized
+        croak "Property '$prop' already exists" if exists $header->{$prop};
+        $header->{$prop} = delete $header->{$key}; # rename $key to $prop
+    }
+
+    $self;
+}
+
 sub get {
     my ( $self, $key ) = @_;
     my $prop = $self->_normalize( $key );
-    $self->{header}->{$prop};
+    $self->header->{$prop};
 }
 
 sub set {
     my ( $self, $key, $value ) = @_;
     my $prop = $self->_normalize( $key );
-    $self->{header}->{$prop} = $value;
+    $self->header->{$prop} = $value;
 }
 
 sub exists {
     my ( $self, $key ) = @_;
     my $prop = $self->_normalize( $key );
-    exists $self->{header}->{$prop};
+    exists $self->header->{$prop};
 }
 
 sub delete {
     my ( $self, $key ) = @_;
     my $prop = $self->_normalize( $key );
-    delete $self->{header}->{$prop};
+    delete $self->header->{$prop};
 }
 
 sub clear {
     my $self = shift;
-    undef %{ $self->{header} };
+    undef %{ $self->header };
     $self;
 }
 
@@ -87,7 +97,6 @@ BEGIN {
         charset
         cookies
         expires
-        location
         nph
         p3p
         status
@@ -96,34 +105,29 @@ BEGIN {
     /) {
         my $body = sub {
             my $self = shift;
-            return $self->{header}->{$method} unless @_;
-            $self->{header}->{$method} = shift;
+            return $self->header->{$method} unless @_;
+            $self->header->{$method} = shift;
             $self;
         };
 
         no strict 'refs';
-        *{$method} = $body;
+        *$method = $body;
     }
 }
 
-sub redirect {
-    my ( $self, $url, $status ) = @_;
-    $self->status( $status || '302 Found' )->location( $url );
-}
-
 sub finalize {
-    my $self   = shift;
-    my $query  = $self->query;
-    my $header = $self->{header};
+    my $self  = shift;
+    my $query = $self->query;
+    my $args  = $self->header;
 
-    $query->print( $query->header($header) );
+    $query->print( $query->header($args) );
 
     return;
 }
 
 sub clone {
     my $self = shift;
-    my %header = %{ $self->{header} };
+    my %header = %{ $self->header };
     ref( $self )->new( %$self, header => \%header );
 }
 
@@ -166,7 +170,7 @@ CGI::Header - Handle CGI.pm-compatible HTTP header properties
 
 =head1 VERSION
 
-This document refers to CGI::Header version 0.58.
+This document refers to CGI::Header version 0.59.
 
 =head1 DEPENDENCIES
 
@@ -239,8 +243,6 @@ by the module.
 
 Returns the header hash reference associated with this CGI::Header object.
 This attribute defaults to a reference to an empty hash.
-The hashref will be passed to CGI.pm's C<header> method to generate
-CGI response headers. See C<CGI::Header#as_string>.
 
 =back
 
@@ -319,7 +321,7 @@ It's identical to:
 
 =back
 
-=head2 PROPERTIES
+=head2 HEADER PROPERTIES
 
 The following methods were named after property names recognized by
 CGI.pm's C<header> method. Most of these methods can both be used to
@@ -386,14 +388,6 @@ expiration interval. The following forms are all valid for this field:
   # at the indicated time & date
   $header->expires( 'Thu, 25 Apr 1999 00:40:33 GMT' );
 
-=item $self = $header->location( $url )
-
-=item $url = $header->location
-
-Get or set the Location header.
-
-  $header->location('http://somewhere.else/in/movie/land');
-
 =item $self = $header->nph( $bool )
 
 =item $bool = $header->nph
@@ -419,13 +413,6 @@ string.
 In this case, the outgoing header will be formatted as:
 
   P3P: policyref="/w3c/p3p.xml", CP="CAO DSP LAW CURa"
-
-=item $self = $header->redirect( $url[, $status] );
-
-Sets redirect URL with an optional HTTP status of the response,
-which defaults to C<302 Found>. Returns this object itself.
-
-  $header->redirect('http://somewhere.else/in/movie/land');
 
 =item $self = $header->status( $status )
 
@@ -473,10 +460,8 @@ Normalized property names are:
 CGI.pm's C<header> method also accepts aliases of property names.
 This module converts them as follows:
 
- 'content-type'  -> 'type'
- 'cookie'        -> 'cookies'
- 'set-cookie'    -> 'cookies'
- 'window-target' -> 'target'
+ 'content-type' -> 'type'
+ 'cookie'       -> 'cookies'
 
 If a property name is duplicated, throws an exception:
 

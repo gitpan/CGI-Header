@@ -6,17 +6,17 @@ use Test::Exception;
 use Test::Output;
 
 subtest 'normalization' => sub {
-    my $class = 'CGI::Header';
+    my $header = CGI::Header->new;
 
     my %data = (
         '-Content_Type'  => 'type',
         '-Cookie'        => 'cookies',
-        '-Set_Cookie'    => 'cookies',
-        '-Window_Target' => 'target',
+        #'-Set_Cookie'    => 'cookies',
+        #'-Window_Target' => 'target',
     );
 
     while ( my ($input, $expected) = each %data ) {
-        is $class->_normalize($input), $expected;
+        is $header->_normalize($input), $expected;
     }
 };
 
@@ -60,8 +60,8 @@ subtest 'header props.' => sub {
     is $header->expires('+3d'), $header;
     is $header->expires, '+3d';
 
-    is $header->location('http://somewhere.else/in/movie/land'), $header;
-    is $header->location, 'http://somewhere.else/in/movie/land';
+    #is $header->location('http://somewhere.else/in/movie/land'), $header;
+    #is $header->location, 'http://somewhere.else/in/movie/land';
 
     is $header->nph(1), $header;
     ok $header->nph;
@@ -83,7 +83,7 @@ subtest 'header props.' => sub {
         charset    => 'utf-8',
         cookies    => 'ID=123456; path=/',
         expires    => '+3d',
-        location   => 'http://somewhere.else/in/movie/land',
+        #location   => 'http://somewhere.else/in/movie/land',
         nph        => '1',
         p3p        => 'CAO DSP LAW CURa',
         status     => '304 Not Modified',
@@ -93,6 +93,7 @@ subtest 'header props.' => sub {
 };
 
 subtest 'CGI::Header#redirect' => sub {
+    plan skip_all => 'obsolete';
     my $header = CGI::Header->new;
     is $header->redirect('http://somewhere.else/in/movie/land'), $header;
     is $header->location, 'http://somewhere.else/in/movie/land';
