@@ -24,6 +24,7 @@ module_name: CGI::Header
 name: CGI-Header
 no_index:
   directory:
+    - examples
     - inc
     - t
     - xt
@@ -35,4 +36,4 @@ requires:
 resources:
   license: http://dev.perl.org/licenses/
   repository: https://github.com/anazawa/p5-CGI-Header
-version: 0.59
+version: 0.60
