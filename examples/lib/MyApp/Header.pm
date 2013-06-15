@@ -1,9 +1,6 @@
+package MyApp::Header;
 use strict;
 use warnings;
-use Test::More tests => 2;
-use Test::Output;
-
-package CGI::Header::Extended;
 use parent 'CGI::Header';
 use CGI::Cookie;
 
@@ -23,9 +20,4 @@ sub cookies {
     $self;
 }
 
-package main;
-
-my $header = CGI::Header::Extended->new;
-
-is $header->cookies( ID => 123456 ), $header;
-stdout_like { $header->finalize } qr{Set-Cookie: ID=123456};
+1;

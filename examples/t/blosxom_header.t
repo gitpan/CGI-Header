@@ -1,6 +1,11 @@
 use strict;
 use warnings;
-use Test::More tests => 1;
+use Test::Output;
+use Test::More tests => 2;
+
+BEGIN {
+    use_ok 'Blosxom::Header';
+}
 
 sub run_blosxom {
     package blosxom;
@@ -13,16 +18,7 @@ sub run_blosxom {
     my $plugin = 'my_plugin';
     $plugin->start && $plugin->last;
 
-    CGI::header( $header ) . $output;
-}
-
-package Blosxom::Header;
-use base 'CGI::Header';
-
-our $INSTANCE;
-
-sub instance {
-    $INSTANCE ||= $_[0]->SUPER::new( header => $blosxom::header );
+    print CGI::header($header) . $output;
 }
 
 package my_plugin;
@@ -38,4 +34,4 @@ sub last {
 
 package main;
 
-like run_blosxom(), qr{Content-length: 12};
+stdout_like \&run_blosxom, qr{Content-length: 12};
