@@ -4,11 +4,12 @@ use strict;
 use warnings;
 use Carp qw/croak/;
 
-our $VERSION = '0.61';
+our $VERSION = '0.62';
 
 sub new {
-    my ( $class, @args ) = @_;
-    ( bless { @args }, $class )->_rehash;
+    my $class = shift;
+    my %args = @_ == 1 ? %{$_[0]} : @_;
+    ( bless \%args => $class )->_rehash;
 }
 
 sub header {
@@ -27,7 +28,7 @@ sub _build_query {
 
 sub _alias {
     my $self = shift;
-    $self->{_alias} ||= $self->_build_alias;
+    $self->{alias} ||= $self->_build_alias;
 }
 
 sub _build_alias {
@@ -170,7 +171,7 @@ CGI::Header - Handle CGI.pm-compatible HTTP header properties
 
 =head1 VERSION
 
-This document refers to CGI::Header version 0.61.
+This document refers to CGI::Header version 0.62.
 
 =head1 DEPENDENCIES
 
