@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Carp qw/croak/;
 
-our $VERSION = '0.62';
+our $VERSION = '0.63';
 
 sub new {
     my $class = shift;
@@ -63,15 +63,24 @@ sub _rehash {
 }
 
 sub get {
-    my ( $self, $key ) = @_;
-    my $prop = $self->_normalize( $key );
-    $self->header->{$prop};
+    my ( $self, @keys ) = @_;
+    my @props = map { $self->_normalize($_) } @keys;
+    @{ $self->header }{ @props };
 }
 
 sub set {
-    my ( $self, $key, $value ) = @_;
-    my $prop = $self->_normalize( $key );
-    $self->header->{$prop} = $value;
+    my ( $self, @pairs ) = @_;
+    my $header = $self->header;
+
+    croak 'Odd number of arguments passed to set()' if @pairs % 2;
+
+    my @values;
+    while ( my ($key, $value) = splice @pairs, 0, 2 ) {
+        my $prop = $self->_normalize( $key );
+        push @values, $header->{$prop} = $value;
+    }
+
+    wantarray ? @values : $values[-1];
 }
 
 sub exists {
@@ -81,9 +90,9 @@ sub exists {
 }
 
 sub delete {
-    my ( $self, $key ) = @_;
-    my $prop = $self->_normalize( $key );
-    delete $self->header->{$prop};
+    my ( $self, @keys ) = @_;
+    my @props = map { $self->_normalize($_) } @keys;
+    delete @{ $self->header }{ @props };
 }
 
 sub clear {
@@ -91,6 +100,8 @@ sub clear {
     undef %{ $self->header };
     $self;
 }
+
+# See also Moose::Meta::Method::Accessor::Native::Hash
 
 BEGIN {
     for my $method (qw/
@@ -171,7 +182,7 @@ CGI::Header - Handle CGI.pm-compatible HTTP header properties
 
 =head1 VERSION
 
-This document refers to CGI::Header version 0.62.
+This document refers to CGI::Header version 0.63.
 
 =head1 DEPENDENCIES
 
@@ -253,7 +264,11 @@ This attribute defaults to a reference to an empty hash.
 
 =item $value = $header->get( $field )
 
+=item ( $v1, $v2, ... ) = $header->get( $f1, $f2, ... )
+
 =item $value = $header->set( $field => $value )
+
+=item ( $v1, $v2, ... ) = $header->set( $f1 => $v1, $f2 => $v2, ... )
 
 Get or set the value of the header field.
 The header field name (C<$field>) is not case sensitive.
@@ -277,8 +292,11 @@ Returns a Boolean value telling whether the specified field exists.
 
 =item $value = $header->delete( $field )
 
-Deletes the specified field form CGI response headers.
-Returns the value of the deleted field.
+=item @values = $header->delete( $f1, $f2, ... )
+
+Deletes the specified fields form CGI response headers.
+In list context it returns the values of the deleted fields.
+In scalar context it returns the value for the last field specified.
 
   my $value = $header->delete('Content-Disposition'); # => 'inline'
 

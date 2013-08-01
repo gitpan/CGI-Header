@@ -1,7 +1,7 @@
 use strict;
 use warnings;
 use CGI::Header;
-use Test::More tests => 8;
+use Test::More tests => 11; 
 use Test::Exception;
 use Test::Output;
 
@@ -38,11 +38,73 @@ subtest 'CGI::Header#new' => sub {
 };
 
 subtest 'header fields' => sub {
-    my $header = CGI::Header->new;
+    my $header = CGI::Header->new( header => { foo => 'bar' } );
     is $header->set( 'Foo' => 'bar' ), 'bar';
     is $header->get('Foo'), 'bar';
     ok $header->exists('Foo');
     is $header->delete('Foo'), 'bar';
+};
+
+subtest '#get' => sub {
+    my $header = CGI::Header->new(
+        header => {
+            foo => 'bar',
+            bar => 'baz',
+        },
+    );
+
+    is $header->get('Foo'), 'bar';
+
+    is $header->get('Foo', 'Bar'), 'baz',
+        'get last property in scalar context';
+
+    is_deeply(
+        [ $header->get('Foo', 'Bar') ],
+        [ 'bar', 'baz' ],
+        'get multiple props. at once'
+    );
+};
+
+subtest '#set' => sub {
+    my $header = CGI::Header->new;
+
+    throws_ok { $header->set('Foo') } qr{^Odd number of arguments passed},
+        'exception with odd number arguments';
+
+    is $header->set( Foo => 'bar' ), 'bar',
+        'set return single new value in scalar context';
+
+    is_deeply(
+        [ $header->set( oink => 'blah', xxy => 'flop' ) ],
+        [ 'blah', 'flop' ],
+        'set returns newly set values in order of keys provided'
+    );
+    
+    is_deeply $header->header, {
+        foo  => 'bar',
+        oink => 'blah',
+        xxy  => 'flop',
+    };
+};
+
+subtest '#delete' => sub {
+    my $header = CGI::Header->new(
+        header => {
+            foo  => 'bar',
+            oink => 'blah',
+            xxy  => 'flop',
+        },
+    );
+
+    is $header->delete('foo'), 'bar', 'delete returns deleted value';
+
+    is_deeply(
+        [ $header->delete('oink', 'xxy') ],
+        [ 'blah', 'flop' ],
+        'delete returns all deleted values in list context'
+    );
+
+    is_deeply $header->header, {};
 };
 
 subtest 'header props.' => sub {
